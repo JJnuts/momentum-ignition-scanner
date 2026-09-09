@@ -23,7 +23,7 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T13 Discord alerts | DONE | 2026-09-09 | 205/205 pytest; test card delivered to the test webhook; policy (cooldown/upgrade/hourly cap), rug-warning delivery, heartbeat, dry-run |
 | Milestone B | RUNNING | started 2026-09-09 | pings ON to the TEST channel; thresholds FROZEN until n >= 100 IGNITION+CONFIRMED alerts per chain |
 | T14 tune.py | DONE | 2026-09-09 | 210/210 pytest: synthetic planted signal ranks top, noise ranks last, expectancy exact on planted outcomes, report renders with/without data; real report: nominations 1.73x control, eff_5m top feature |
-| T15 Replay backtester | todo | | |
+| T15 Replay backtester | DONE | 2026-09-09 | 220/220 pytest: synthetic tape reproduces live decision, planted backfill + config change reproduced via knowledge time / config version, exact-path rules on planted candles; real: 2344 decisions 94.7% match (legacy), gaps = backfill + eligibility config drift, fixed by schema v8 |
 
 ## T0 notes (2026-09-08)
 - Layout: `scanner/` package (`config`, `plans`, `db`, `recorder`, `logging_setup`, `__main__`),
@@ -230,6 +230,16 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   Reports land in `reports/` (git-ignored).
 - First real report (SPEC s25): Stage 1 lift 1.73x vs control; impact efficiency top feature; rVol level not
   predictive past the gate; cohort z inverse; -20% stop hit by ~15% at +15m; coarse expectancy positive.
+
+## T15 notes (2026-09-09)
+- `scanner/backtest.py`: replay_decisions (rebuild tape from `trades`, recompute features/wash/decision, compare
+  with tolerance), load_recorded_paths / evaluate_paths (exact intrabar rules on labeler OHLCV), CLI `backtest`.
+- First real run: 2344 decisions, 94.7% decision match, 11 s. Mismatches were recording gaps, not logic: trades
+  backfilled after the decision (n 201 vs 200 -> aVWAP/score drift) and the eligibility window config change.
+- Schema v8: `trades.ingested_ts`, `decisions.config_hash`, `config_versions` (hash -> tunables JSON). Runner
+  registers the config at start; tape ingest stamps ingested_ts; replay filters by knowledge time and uses the
+  decision's own config version. Report separates the exactly reproducible subset from legacy rows.
+- Live scanner is still on pre-v8 code (user-run launcher). Restart needed before the exact subset fills.
 
 ## Commands
     python -m pytest              # unit tests

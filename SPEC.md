@@ -771,3 +771,51 @@ First read (Milestone A data, ~6 h, n=193 nominations vs 118 controls):
   nominations; time-to-peak is bimodal (+5m: 38, +60m: 49 of 139).
 - Expectancy (coarse): rule A +4.5% mean / 53% win, rule B +10.2% / 69%.
   Positive, small n, horizon-granular. Do not size on it yet.
+
+---------------------------------------------------------------------------
+## 26. Replay backtester (T15, 2026-09-09) and the reproducibility findings
+
+`python -m scanner backtest [--since-days N] [--limit N] [--out reports/x.md]`.
+Two halves:
+
+1. Reproducibility gate. Every live decision is re-derived from the database
+   only: tape rebuilt from `trades` (last ring_size trades with ts <= the
+   decision's as_of), features, wash and the decision recomputed from the
+   Stage-1 features as of eval time and the safety verdict recorded on the
+   decision. Compared: feature n/ofi30/buyers/anchor/avwap/price_vs_anchor
+   (tol 1e-6), wash score + hard vetoes, decision score/tier/eligible/
+   since_anchor. Mismatches are listed, never hidden.
+2. Exact-path outcomes. Alerts and nominations are walked on the 1-minute
+   candles the labeler recorded (raw recorder, ohlcv_v3) under the fixed
+   rules: stop -20% on candle low (conservative: a candle that hits both
+   stop and a new high is a stop), rule A = time stop at +15, rule B = trail
+   -30% from peak or close at +30. Reports peak and minutes-to-peak.
+
+First real run (2344 decisions, 11 s): decision match 94.7%, feature match
+89.3%, wash match 94.5%. Two recording gaps explained essentially all of it:
+- Backfill. The tape poller adds trades that were not yet visible when the
+  decision was taken (first-contact depth, later pages). Replay saw n=201
+  where live saw 200 and everything downstream (aVWAP, price vs anchor,
+  score) drifted. This is knowledge time, not a logic bug.
+- Config drift. The eligibility window was widened from [30,180] to [30,360]
+  mid-burn-in; replaying old decisions under the new config flips
+  `eligible` on rows that the live run rejected.
+
+Fix (schema v8): `trades.ingested_ts` records when each trade entered the
+database; `decisions.config_hash` records the tunables version used
+(sha256 of the sorted tunables, first 16 hex; the full JSON lives in
+`config_versions`, registered once per run). Replay filters the tape to
+`ingested_ts <= eval_ts` when the token has knowledge timestamps and
+re-derives the decision under its own config version. The report shows the
+"exactly reproducible subset" separately from legacy rows (no config
+version / no knowledge time). Legacy rows keep their 94.7%; the exact
+subset is 0/0 until the scanner is restarted on v8, after which the
+expectation is 100% (the acceptance test plants a backfilled trade and a
+config change and reproduces both).
+
+Exact-path read (225 nominations, no alerts with paths yet): stop hit 24%;
+rule A mean +5.6%, median +0.1%, win 51%; rule B mean +4.3%, median -2.2%,
+win 41%; peak median +10% at 8 min. Consistent with the T14 coarse read
+(positive mean, thin median, bimodal peak timing). Rule B underperforms rule
+A on exact paths because the trail is hit by the intrabar noise the coarse
+read could not see. Milestone C input, not a sizing input.

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from .birdeye import BirdeyeClient
 from .config import ChainConfig, Config
-from .db import open_db
+from .db import open_db, register_config
 from .ledger import CULedger
 from .plans import cu_cost, daily_cu_budget
 from .recorder import RawRecorder
@@ -104,6 +104,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
     daily_cap = int(birdeye_cfg.get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     started = time.time()
     stats: dict[str, ChainStats] = {ch.name: ChainStats() for ch in cfg.enabled_chains}
+    cfg_hash = register_config(conn, cfg.raw, int(started))
+    log.info("config version %s registered", cfg_hash)
 
     log.info("run start: plan=%s daily_cu_cap=%d cu_today=%d projected_cu/day=%d chains=%s",
              cfg.birdeye_plan, daily_cap, ledger.today_total(), projected_cu_per_day(cfg),
@@ -342,7 +344,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                 conn.execute("BEGIN")
                 try:
                     tf_id = persist_features(conn, ch.name, address, f, eval_ts, wash=w)
-                    decision_id = persist_decision(conn, d, tape_features_id=tf_id)
+                    decision_id = persist_decision(conn, d, tape_features_id=tf_id, config_hash=cfg_hash)
                     conn.execute("COMMIT")
                 except Exception:
                     conn.execute("ROLLBACK")

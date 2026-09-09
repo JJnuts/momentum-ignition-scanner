@@ -182,14 +182,15 @@ def decide(chain: str, address: str, f: TapeFeatures, wash: WashReport, cfg: dic
                     alertable=alertable, hard_vetoes=hard, soft_flags=soft, components=comps)
 
 
-def persist_decision(conn: sqlite3.Connection, d: Decision, tape_features_id: int | None = None) -> int:
+def persist_decision(conn: sqlite3.Connection, d: Decision, tape_features_id: int | None = None,
+                     config_hash: str | None = None) -> int:
     cur = conn.execute(
         "INSERT INTO decisions(chain, address, eval_ts, as_of, anchor_ts, anchor_source, since_anchor_s, score, tier, "
-        "eligible, alertable, hard_vetoes, soft_flags, components_json, tape_features_id) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "eligible, alertable, hard_vetoes, soft_flags, components_json, tape_features_id, config_hash) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (d.chain, d.address, d.eval_ts, d.as_of, d.anchor_ts, d.anchor_source, d.since_anchor_s, d.score, d.tier,
          int(d.eligible), int(d.alertable), ",".join(d.hard_vetoes) or None, ",".join(d.soft_flags) or None,
-         json.dumps([asdict(c) for c in d.components], separators=(",", ":"), default=str), tape_features_id))
+         json.dumps([asdict(c) for c in d.components], separators=(",", ":"), default=str), tape_features_id, config_hash))
     return int(cur.lastrowid)
 
 

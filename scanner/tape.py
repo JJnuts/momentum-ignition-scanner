@@ -146,8 +146,8 @@ class TokenTape:
 class TapeStore:
     """All token tapes + persistence."""
 
-    _INSERT = ("INSERT OR IGNORE INTO trades(chain, address, sig, ts, side, wallet, usd, price, amount, source) "
-               "VALUES(?,?,?,?,?,?,?,?,?,?)")
+    _INSERT = ("INSERT OR IGNORE INTO trades(chain, address, sig, ts, side, wallet, usd, price, amount, source, ingested_ts) "
+               "VALUES(?,?,?,?,?,?,?,?,?,?,?)")
 
     def __init__(self, conn: sqlite3.Connection, ring_size: int = 600) -> None:
         self.conn = conn
@@ -182,10 +182,11 @@ class TapeStore:
         invalid = len(items) - len(trades)
         new = tape.add(trades)
         if new:
+            ingested = int(time.time())
             self.conn.execute("BEGIN")
             try:
                 self.conn.executemany(self._INSERT, [
-                    (t.chain, t.address, t.sig, t.ts, t.side, t.wallet, t.usd, t.price, t.amount, t.source) for t in new])
+                    (t.chain, t.address, t.sig, t.ts, t.side, t.wallet, t.usd, t.price, t.amount, t.source, ingested) for t in new])
                 self.conn.execute("COMMIT")
             except Exception:
                 self.conn.execute("ROLLBACK")

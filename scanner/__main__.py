@@ -269,6 +269,31 @@ def cmd_tune(config_path: Path, env_path: Path, since_days: float | None, out: P
     return 0
 
 
+def cmd_backtest(config_path: Path, env_path: Path, since_days: float | None, limit: int | None, out: Path | None) -> int:
+    import time as _time
+
+    from .backtest import evaluate_paths, format_report, replay_decisions
+    from .db import open_db
+
+    try:
+        cfg = load_config(config_path, env_path)
+    except ConfigError as e:
+        print(f"config error: {e}")
+        return 2
+    conn = open_db(cfg.db_path)
+    since = int(_time.time() - since_days * 86400) if since_days else 0
+    rep = replay_decisions(conn, cfg.raw, since_ts=since, limit=limit)
+    paths = evaluate_paths(conn, cfg.raw_dir, cfg.raw, since_ts=since)
+    text = format_report(rep, paths)
+    conn.close()
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"report written: {out}")
+    print(text)
+    return 0 if rep.n == 0 or rep.decision_match_rate >= 0.99 else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -276,7 +301,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001
             pass
     parser = argparse.ArgumentParser(prog="scanner", description="Momentum Ignition Scanner")
-    parser.add_argument("command", choices=["selftest", "smoke", "run", "replay", "tape-check", "tune"])
+    parser.add_argument("command", choices=["selftest", "smoke", "run", "replay", "tape-check", "tune", "backtest"])
+    parser.add_argument("--limit", type=int, default=None, help="backtest: only the last N decisions")
     parser.add_argument("--since-days", type=float, default=None, help="tune: only events from the last N days")
     parser.add_argument("--out", type=Path, default=None, help="tune: also write the markdown report here")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
@@ -297,6 +323,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_tape_check(args.config, args.env, (args.chain or [None])[0], args.address, args.pages)
     if args.command == "tune":
         return cmd_tune(args.config, args.env, args.since_days, args.out)
+    if args.command == "backtest":
+        return cmd_backtest(args.config, args.env, args.since_days, args.limit, args.out)
     return cmd_run(args.config, args.env, args.duration, args.once)
 
 

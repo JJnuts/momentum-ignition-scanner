@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA: list[str] = [
     # key/value state (schema version, cursors, daily budget counters)
@@ -248,11 +248,44 @@ MIGRATIONS: dict[int, list[str]] = {
         "CREATE INDEX IF NOT EXISTS ix_rug_checks_alert ON rug_checks(alert_id)",
         "CREATE INDEX IF NOT EXISTS ix_rug_checks_warned ON rug_checks(warned, delivered_ts)",
     ],
+    8: [  # T15: reproducibility - knowledge time per trade, config version per decision
+        "ALTER TABLE trades ADD COLUMN ingested_ts INTEGER",          # when WE learned of the trade (NULL = legacy row)
+        "ALTER TABLE decisions ADD COLUMN config_hash TEXT",          # which tunables produced the decision
+        """CREATE TABLE IF NOT EXISTS config_versions(
+            hash          TEXT PRIMARY KEY,
+            json          TEXT NOT NULL,
+            first_seen_ts INTEGER NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_trades_ingested ON trades(chain, address, ingested_ts)",
+    ],
 }
+
+
+def config_hash(tunables: dict) -> str:
+    """Stable hash of the tunables (config.json content; it holds no secrets)."""
+    import hashlib
+    import json as _json
+    return hashlib.sha256(_json.dumps(tunables, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()[:16]
+
+
+def register_config(conn: sqlite3.Connection, tunables: dict, now: int) -> str:
+    import json as _json
+    h = config_hash(tunables)
+    conn.execute("INSERT OR IGNORE INTO config_versions(hash, json, first_seen_ts) VALUES(?,?,?)",
+                 (h, _json.dumps(tunables, sort_keys=True, default=str), now))
+    return h
+
+
+def config_by_hash(conn: sqlite3.Connection, h: str | None) -> dict | None:
+    import json as _json
+    if not h:
+        return None
+    r = conn.execute("SELECT json FROM config_versions WHERE hash=?", (h,)).fetchone()
+    return _json.loads(r["json"]) if r else None
 
 EXPECTED_TABLES = {
     "meta", "scan_rows", "nominations", "candidates", "trades",
-    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions", "rug_checks",
+    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions", "rug_checks", "config_versions",
 }
 
 
