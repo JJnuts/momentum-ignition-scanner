@@ -57,3 +57,20 @@ tests/           pytest (offline; real API shapes in tests/fixtures)
 ```
 
 All thresholds live in `config.json` and are frozen between calibration windows.
+
+## Roadmap status
+
+MVP complete (T0–T13, 2026-09-09): scan → nominate → trade tape → features → wash/vetoes →
+candidates → score → safety (Solana + Robinhood) → rug watch → Discord alerts. Milestone B
+(burn-in with alerts on, thresholds frozen) is running.
+
+Remaining, in order (details in `ROADMAP.md`):
+
+| task | what it delivers | status |
+|---|---|---|
+| Milestone B | run until ≥100 IGNITION+CONFIRMED alerts per chain | running |
+| T14 tune.py | per-feature lift vs control, MAE/MFE and time-to-peak distributions, expectancy under the fixed rule | todo |
+| T15 replay backtester | deterministic re-run of every stage over recorded data; must reproduce live decisions | todo |
+| Milestone C | first evidence-based tuning pass, refreeze, second window | todo |
+| T9b pre-migration regime | bonding-curve tokens (progress velocity, buyers/min, migration dedupe) | optional |
+| v2: T16–T19 | WebSocket rail (Premium), Helius bundle clustering, paper executor, live executor at minimum size | not scoped |
