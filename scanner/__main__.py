@@ -170,6 +170,82 @@ def cmd_replay(config_path: Path, env_path: Path, chains: list[str] | None) -> i
     return 0
 
 
+def cmd_tape_check(config_path: Path, env_path: Path, chain: str | None, address: str | None, pages: int) -> int:
+    """T5 acceptance: fetch a token's tape live, verify ordering/dedupe, compare 5-min USD sum with the list row."""
+    import asyncio
+    import time as _time
+
+    from .birdeye import BirdeyeClient
+    from .db import open_db
+    from .ledger import CULedger
+    from .recorder import RawRecorder
+    from .tape import TapeStore, fetch_tape
+
+    try:
+        cfg = load_config(config_path, env_path)
+    except ConfigError as e:
+        print(f"config error: {e}")
+        return 2
+    setup_logging(cfg.log_dir)
+    conn = open_db(cfg.db_path)
+    chain = chain or "solana"
+    ch = cfg.chains[chain]
+    if address is None:
+        # a MID-activity recent token: enough trades to measure, few enough that 3 pages (300 trades)
+        # cover at least 5 minutes. SOL/USDC-class tokens trade hundreds of times per second.
+        if chain == "solana":
+            row = conn.execute("SELECT address, symbol FROM scan_rows WHERE chain=? AND ts>=? AND tr_5m BETWEEN 20 AND 200 "
+                               "ORDER BY vol_5m DESC LIMIT 1", (chain, int(_time.time()) - 900)).fetchone()
+        else:
+            row = conn.execute("SELECT address, symbol FROM scan_rows WHERE chain=? AND ts>=? AND tr_1h BETWEEN 100 AND 2000 "
+                               "ORDER BY vol_1h DESC LIMIT 1", (chain, int(_time.time()) - 900)).fetchone()
+        if row is None:
+            print("no recent scan rows; pass --address")
+            return 1
+        address = row["address"]
+        print(f"token: {row['symbol']} {address}")
+
+    async def go() -> int:
+        ledger = CULedger(conn)
+        async with BirdeyeClient(cfg.secret("BIRDEYE_API_KEY") or "", cfg.birdeye_plan, base_url=cfg.birdeye_base_url,
+                                 recorder=RawRecorder(cfg.raw_dir, cfg.recorder_enabled), ledger=ledger,
+                                 rate_safety=float(cfg.raw["birdeye"].get("rate_safety", 0.8))) as be:
+            store = TapeStore(conn)
+            r1 = await fetch_tape(be, store, ch, address, max_pages=pages)
+            print(f"fetch 1: pages={r1.pages} fetched={r1.fetched} new={r1.new} dup={r1.dup} cu={r1.cu} stop={r1.stopped}"
+                  + (f" ERROR {r1.error}" if r1.error else ""))
+            r2 = await fetch_tape(be, store, ch, address, max_pages=1)
+            print(f"fetch 2 (incremental): fetched={r2.fetched} new={r2.new} dup={r2.dup} cu={r2.cu} stop={r2.stopped}")
+            tape = store.get(ch.name, address)
+            ts = [t.ts for t in tape.trades()]
+            sigs = [t.sig for t in tape.trades()]
+            print(f"tape: {len(tape)} trades, span {tape.oldest_ts}..{tape.newest_ts} "
+                  f"({(tape.newest_ts or 0) - (tape.oldest_ts or 0)} s), sorted={ts == sorted(ts)}, "
+                  f"unique sigs={len(set(sigs)) == len(sigs)}")
+            now = int(_time.time())
+            covered_5m = tape.oldest_ts is not None and tape.oldest_ts <= now - 300
+            s5 = tape.sum_usd(now - 300)
+            b5 = tape.sum_usd(now - 300, "buy")
+            print(f"last 5m: trades={tape.count(now - 300)} usd={s5:,.0f} (buy {b5:,.0f}) "
+                  f"unique wallets={tape.unique_wallets(now - 300)} tape covers full 5m={covered_5m}")
+            row = conn.execute("SELECT vol_5m, vol_1h, ts FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
+                               (chain, address)).fetchone()
+            if row and row["vol_5m"] is not None and covered_5m:
+                ref = float(row["vol_5m"])
+                diff = (s5 / ref - 1) * 100 if ref else float("nan")
+                print(f"list-row vol_5m={ref:,.0f} (age {now - int(row['ts'])} s) -> tape/list diff {diff:+.1f}% "
+                      f"({'OK' if abs(diff) <= 15 else 'OUTSIDE +-15%'})")
+            elif row and row["vol_1h"] is not None:
+                print(f"(no 5m field on this chain) list-row vol_1h={float(row['vol_1h']):,.0f}; "
+                      f"tape 1h usd={tape.sum_usd(now - 3600):,.0f} covers 1h={tape.oldest_ts is not None and tape.oldest_ts <= now - 3600}")
+            print(f"CU: {ledger.session_cu}")
+            dbn = conn.execute("SELECT COUNT(*) FROM trades WHERE chain=? AND address=?", (chain, address)).fetchone()[0]
+            print(f"persisted rows for token: {dbn}")
+            return 0
+
+    return asyncio.run(go())
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -177,12 +253,14 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001
             pass
     parser = argparse.ArgumentParser(prog="scanner", description="Momentum Ignition Scanner")
-    parser.add_argument("command", choices=["selftest", "smoke", "run", "replay"])
+    parser.add_argument("command", choices=["selftest", "smoke", "run", "replay", "tape-check"])
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--env", type=Path, default=ENV_PATH)
     parser.add_argument("--duration", type=float, default=None, help="run: stop after N seconds")
     parser.add_argument("--once", action="store_true", help="run: one cycle per chain, then exit")
     parser.add_argument("--chain", action="append", default=None, help="replay: restrict to chain (repeatable)")
+    parser.add_argument("--address", default=None, help="tape-check: token address (default: hottest recent)")
+    parser.add_argument("--pages", type=int, default=3, help="tape-check: pages on first fetch")
     args = parser.parse_args(argv)
     if args.command == "selftest":
         return cmd_selftest(args.config, args.env)
@@ -190,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_smoke(args.config, args.env)
     if args.command == "replay":
         return cmd_replay(args.config, args.env, args.chain)
+    if args.command == "tape-check":
+        return cmd_tape_check(args.config, args.env, (args.chain or [None])[0], args.address, args.pages)
     return cmd_run(args.config, args.env, args.duration, args.once)
 
 

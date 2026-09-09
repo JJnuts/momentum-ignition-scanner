@@ -522,3 +522,34 @@ Two passes, chosen for cost:
 - Restart-safe: pending work lives in `labels` (status/path_status/attempts).
 - First real data point: AMC Stage-1 ignition 14:25 -> +9.3%/+32.7%/+65.9%
   close at +5/+15/+30 min, MAE +1.4%. n=1; means nothing yet.
+
+---------------------------------------------------------------------------
+## 16. Trade tape findings (T5, 2026-09-09, Starter)
+
+- One transaction can carry several trade legs (8/20 tx hashes duplicated on a
+  Robinhood page). Dedupe key = tx_hash : ins_index : inner_ins_index (Solana)
+  or log_index (EVM). Pages overlap when trades arrive between page calls
+  (16-18 dups per 300 on hot tokens) - harmless with signature dedupe.
+- The token's own leg is whichever of from/to matches the token address; its
+  `price` is the token USD price and `ui_amount` the token quantity. `side`
+  and `volume_usd` are top-level.
+- Verification against Birdeye's own trade-data (same instant): memecoin-class
+  tokens agree within ~1% USD and ~3-6% trade count (ZCAT $45.6k vs $45.5k;
+  NEAR $26.8k vs $27.1k). The LIST row lags more than its timestamp implies
+  (ZCAT list $38.5k at "age 5 s"), so the acceptance reference is trade-data,
+  not the list. Low-activity multi-venue tokens (TRX, jlUSDC) show large gaps
+  (tape 23 vs 35 trades) with the newest tape trade 40 s old -> see the
+  tx_type / lag check below.
+- SOL/USDC-class tokens trade hundreds of times per second: 300 trades = 1 s.
+  The tape is only meaningful for candidates, never for majors; the tape-check
+  picker now targets 20-200 trades per 5 min.
+- Cost model as built: first fetch 2 pages (24 CU), then 1 page every 3rd
+  poll at 60 s (12 CU / 3 min) while a candidate stays active (8 min) ->
+  ~48-60 CU per candidate. Daily tape budget 80k CU, enforced in the poller
+  in addition to the global daily cap.
+- Follow-up on the TRX gap: sampled at the SAME instant, trade-data 17 trades /
+  $5,457 vs tape 15 / $5,455 (tx_type swap == all). The earlier 23-vs-35 gap
+  was indexing lag: the txs endpoint trails the stats endpoint by 40-80 s on
+  quiet tokens, ~2 s on hot ones. Stage 2 evaluates hot candidates, so the
+  practical lag is seconds; T6 should still timestamp features by the tape's
+  newest trade, not wall clock.

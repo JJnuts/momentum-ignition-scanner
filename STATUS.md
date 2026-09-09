@@ -11,7 +11,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T3 Stage 1 features | DONE | 2026-09-08 | 82/82 pytest; replay over 0.37h: SOL 26.8/h, RH 20.5/h cold-start; thresholds calibrated once and FROZEN (SPEC s14); live runner cycle persisted a WATCH nomination |
 | T4 Labeler v1 | DONE | 2026-09-08 | 94/94 pytest; live: runner enqueued a nomination + a control, label loop ticked; real OHLCV path fill on AMC parsed correctly |
 | Milestone A | RUNNING | started 2026-09-09 | Starter key; detached via start_scanner.bat / PowerShell Start-Process; stop with stop_scanner.bat; WATCH-only, thresholds frozen |
-| T5–T9b Phase 2 | todo | | |
+| T5 Trade tape | DONE | 2026-09-09 | 106/106 pytest; live: sorted, unique sigs, page-overlap dups caught, incremental fetch, rows persisted; tape vs Birdeye trade-data within ~1% USD on memecoin tokens |
+| T6–T9b Phase 2 | todo | | |
 | T10–T12 Phase 3 | todo | | T10 = RPC-based (Birdeye security is Premium-only) |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
@@ -108,6 +109,22 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   stop_scanner.bat (taskkill by PID). NOTE: from Git Bash use `cmd.exe //c` (MSYS converts `/c` to `C:\`).
 - Milestone A goal: n >= 100 nominations per chain with labels; no threshold changes; review nomination
   rate, CU/day vs 240k cap, label completion rate, and the RH 1-10/h target.
+
+## T5 notes (2026-09-09)
+- `scanner/tape.py`: normalize (token leg by address; sig = tx_hash:ins_index:inner/log index), TokenTape ring
+  (sorted, deduped incl. within-batch), TapeStore (INSERT OR IGNORE into `trades`, reload on restart),
+  fetch_tape (incremental paging: stop at has_next=false / reached-known / page cap), TapePoller (first fetch
+  2 pages, refresh every 3rd poll, daily tape CU budget 80k + global cap). Runner `tape_loop` every 60 s over a
+  PROVISIONAL active set (WATCH nominations from the last 8 min, <=12/chain) until T8.
+- `python -m scanner tape-check [--chain] [--address] [--pages]`: live acceptance.
+- Defects found and fixed during QA: (1) duplicates within one batch slipped into the ring (pages overlap in
+  practice) -> dedupe against ring AND batch; (2) the "hottest token" picker chose SOL/USDC-class tokens whose
+  300 trades span 1 s -> picker targets 20-200 trades / 5 min.
+- Acceptance vs Birdeye trade-data at the same instant: ZCAT $45.6k vs $45.5k, NEAR $26.8k vs $27.1k,
+  TRX $5,455 vs $5,457. List rows lag more than their timestamp suggests; quiet tokens' txs lag 40-80 s.
+- OPS: the Milestone A process was found dead at 15:49 (no traceback, no summary, pid file left) -> external
+  kill, most likely the minimized console closed. Relaunched HIDDEN with T5 code (start_scanner.bat now uses
+  PowerShell Start-Process -WindowStyle Hidden). ~17 min gap in Milestone A data.
 
 ## Commands
     python -m pytest              # unit tests

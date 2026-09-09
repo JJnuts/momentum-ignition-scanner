@@ -107,7 +107,7 @@
     "deep_poll_interval_s": 25,
     "stay_rvol_5m_min": 2.0,
     "stay_ofi_5m_min": 0.0,
-    "max_stay_min": 10
+    "max_stay_min": 8
   },
   "alerts": {
     "cooldown_min": 20,
@@ -134,5 +134,13 @@
     "ohlcv_path_for": "nominations",
     "max_path_attempts": 3,
     "path_deadline_s": 21600
+  },
+  "tape": {
+    "_comment": "Stage-2 trade tape (txs v3, 12 CU/page of 100). Polls the active candidate set; T8 owns the real set, until then the runner uses WATCH nominations from the last candidates.max_stay_min. Budgeted: the tape is the most expensive stream.",
+    "poll_interval_s": 60,
+    "pages_on_first_fetch": 2,
+    "refresh_every_n_polls": 3,
+    "ring_size": 600,
+    "daily_cu_budget": 80000
   }
 }

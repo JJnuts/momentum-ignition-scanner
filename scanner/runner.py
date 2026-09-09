@@ -17,6 +17,7 @@ from .recorder import RawRecorder
 from .labeler import Labeler
 from .stage0 import CycleResult, Stage0Scanner
 from .stage1 import Stage1
+from .tape import TapePoller, TapeStore
 
 log = logging.getLogger("runner")
 
@@ -57,6 +58,12 @@ class RunSummary:
     labels_failed: int = 0
     paths_done: int = 0
     label_counts: dict = field(default_factory=dict)
+    tape_polls: int = 0
+    tape_fetched: int = 0
+    tape_new: int = 0
+    tape_cu: int = 0
+    tape_skipped_budget: int = 0
+    tape_errors: int = 0
 
 
 def projected_cu_per_day(cfg: Config) -> int:
@@ -85,6 +92,23 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         labeler = Labeler(conn, client, ledger, cfg.raw.get("labeler", {}), cfg.birdeye_plan, daily_cap)
         chain_map = {ch.name: ch for ch in cfg.enabled_chains}
         label_totals = {"ticks": 0, "done": 0, "failed": 0, "paths": 0}
+        tape_cfg = cfg.raw.get("tape", {})
+        store = TapeStore(conn, ring_size=int(tape_cfg.get("ring_size", 600)))
+        poller = TapePoller(client, store, ledger, tape_cfg, daily_cap)
+        tape_totals = {"polls": 0, "fetched": 0, "new": 0, "cu": 0, "budget": 0, "errors": 0}
+        stay_s = int(cfg.raw.get("candidates", {}).get("max_stay_min", 8)) * 60
+        max_per_chain = int(cfg.raw.get("candidates", {}).get("max_per_chain", 12))
+
+        async def provisional_active() -> list[tuple[ChainConfig, str]]:
+            """Until T8: the most recent WATCH nominations per chain, within the stay window."""
+            now = int(time.time())
+            out: list[tuple[ChainConfig, str]] = []
+            for ch in cfg.enabled_chains:
+                rows = conn.execute(
+                    "SELECT address, MAX(ts) AS ts FROM nominations WHERE chain=? AND tier='WATCH' AND ts>=? "
+                    "GROUP BY address ORDER BY ts DESC LIMIT ?", (ch.name, now - stay_s, max_per_chain)).fetchall()
+                out.extend((ch, r["address"]) for r in rows)
+            return out
 
         def account(res: CycleResult) -> None:
             st = stats[res.chain]
@@ -160,8 +184,31 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                     return
                 await asyncio.sleep(labeler.tick_interval_s)
 
+        async def tape_loop() -> None:
+            while True:
+                try:
+                    active = await provisional_active()
+                    if active:
+                        ps = await poller.poll(active)
+                        tape_totals["polls"] += ps.polled
+                        tape_totals["fetched"] += ps.fetched
+                        tape_totals["new"] += ps.new
+                        tape_totals["cu"] += ps.cu
+                        tape_totals["budget"] += ps.skipped_budget
+                        tape_totals["errors"] += ps.errors
+                        log.info("tape poll: active=%d polled=%d skipped(refresh=%d, budget=%d) fetched=%d new=%d "
+                                 "errors=%d cu=%d (tape cu today=%d/%d)", ps.active, ps.polled, ps.skipped_refresh,
+                                 ps.skipped_budget, ps.fetched, ps.new, ps.errors, ps.cu, poller.cu_today,
+                                 poller.daily_cu_budget)
+                except Exception:  # noqa: BLE001
+                    log.exception("tape poll crashed")
+                if once:
+                    return
+                await asyncio.sleep(poller.interval_s)
+
         tasks = [asyncio.create_task(chain_loop(ch), name=f"chain:{ch.name}") for ch in cfg.enabled_chains]
         tasks.append(asyncio.create_task(label_loop(), name="labeler"))
+        tasks.append(asyncio.create_task(tape_loop(), name="tape"))
         try:
             if once:
                 await asyncio.gather(*tasks)
@@ -186,7 +233,10 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          rh_rows_with_5m=rh_5m, rh_rows_total=rh_total,
                          label_ticks=label_totals["ticks"], labels_done=label_totals["done"],
                          labels_failed=label_totals["failed"], paths_done=label_totals["paths"],
-                         label_counts=label_counts)
+                         label_counts=label_counts,
+                         tape_polls=tape_totals["polls"], tape_fetched=tape_totals["fetched"],
+                         tape_new=tape_totals["new"], tape_cu=tape_totals["cu"],
+                         tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"])
     conn.close()
     return summary
 
@@ -209,6 +259,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
         lines.append(f"             labeler: rows created={st.labels_created} controls drawn={st.controls_drawn}")
     lines.append(f"  labeler ticks={s.label_ticks} done={s.labels_done} failed={s.labels_failed} paths={s.paths_done}; "
                  f"label table: {s.label_counts}")
+    lines.append(f"  tape polls={s.tape_polls} fetched={s.tape_fetched} new={s.tape_new} cu={s.tape_cu} "
+                 f"budget_skips={s.tape_skipped_budget} errors={s.tape_errors}")
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     lines.append(f"  CU today={s.cu_today_total} cap={daily_cap}; projected Stage-0 CU/day={s.projected_cu_per_day} "
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")
