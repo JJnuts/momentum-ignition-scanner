@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA: list[str] = [
     # key/value state (schema version, cursors, daily budget counters)
@@ -223,11 +223,36 @@ MIGRATIONS: dict[int, list[str]] = {
         "CREATE INDEX IF NOT EXISTS ix_decisions_chain_addr_ts ON decisions(chain, address, eval_ts)",
         "CREATE INDEX IF NOT EXISTS ix_decisions_alertable ON decisions(alertable, alerted_ts)",
     ],
+    7: [  # T12: rug watch re-checks after alerts
+        """CREATE TABLE IF NOT EXISTS rug_checks(
+            id             INTEGER PRIMARY KEY,
+            alert_id       INTEGER NOT NULL,
+            chain          TEXT    NOT NULL,
+            address        TEXT    NOT NULL,
+            alert_ts       INTEGER NOT NULL,
+            minute         INTEGER NOT NULL,      -- 10 | 30 | 60
+            due_ts         INTEGER NOT NULL,
+            done_ts        INTEGER,
+            status         TEXT    NOT NULL DEFAULT 'pending',   -- pending | done | failed
+            liq_then       REAL,
+            liq_now        REAL,
+            liq_change_pct REAL,
+            safety_then    TEXT,
+            safety_now     TEXT,
+            warned         INTEGER NOT NULL DEFAULT 0,
+            reason         TEXT,
+            detail         TEXT,
+            delivered_ts   INTEGER                -- set by T13 when the warning is posted
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_rug_checks_due ON rug_checks(status, due_ts)",
+        "CREATE INDEX IF NOT EXISTS ix_rug_checks_alert ON rug_checks(alert_id)",
+        "CREATE INDEX IF NOT EXISTS ix_rug_checks_warned ON rug_checks(warned, delivered_ts)",
+    ],
 }
 
 EXPECTED_TABLES = {
     "meta", "scan_rows", "nominations", "candidates", "trades",
-    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions",
+    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions", "rug_checks",
 }
 
 

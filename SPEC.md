@@ -714,3 +714,17 @@ so holder maps cannot be rebuilt from Transfer logs at ~10 blocks/s.
 - Live on 3 candidates (75 CU, 0 RPC errors): all paths OK, 0% tax, owner
   none; one used the pool round-trip fallback.
 - RPC client: browser-like UA, ~3 rps pacing, one retry on 429.
+
+---------------------------------------------------------------------------
+## 23. Rug watch (T12, 2026-09-09)
+
+`scanner/rugwatch.py`, rows in `rug_checks` (schema v7). When T13 sends an
+alert it calls schedule(alert_id, chain, address, alert_ts, liquidity,
+safety_verdict) -> one pending row per re-check minute (10, 30, 60). The
+label loop ticks it every 30 s. A due row reads liquidity (scan_rows within
++-120 s, else market_data_single 8 CU on Lite+), forces a safety re-check,
+and warns on LIQUIDITY_DROP (<= -40% vs the alert) and/or SAFETY_FLIP
+(verdict -> UNSAFE, with the new hard reasons). One warning per alert per
+reason; later re-checks never repeat it. Rows with warned=1 and
+delivered_ts NULL are the queue T13 posts as RUG WARNING (naming the token
+and how long ago it was alerted). No data for 15 min after due -> failed.

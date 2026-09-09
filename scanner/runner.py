@@ -20,6 +20,7 @@ from .stage1 import Stage1
 from .candidates import CandidateManager
 from .enrichment import Enricher
 from .features import compute as compute_features
+from .rugwatch import RugWatch
 from .safety import SafetyChecker
 from .scoring import decide, latest_stage1_features, persist_decision
 from .tape import TapePoller, TapeStore, persist_features
@@ -73,6 +74,7 @@ class RunSummary:
     candidate_stats: dict = field(default_factory=dict)
     decision_totals: dict = field(default_factory=dict)
     safety_totals: dict = field(default_factory=dict)
+    rug_totals: dict = field(default_factory=dict)
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -125,6 +127,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         safety = SafetyChecker(conn, client, ledger, cfg.raw.get("safety", {}), daily_cap,
                                {"solana": cfg.secret("SOLANA_RPC_URL"), "robinhood": cfg.secret("ROBINHOOD_RPC_URL")})
         safety_totals: dict[str, int] = {}
+        rugwatch = RugWatch(conn, client, ledger, safety, cfg.raw.get("rugwatch", {}), cfg.birdeye_plan, daily_cap)
+        rug_totals = {"checks": 0, "warnings": 0, "failed": 0, "cu": 0}
 
         def latest_liquidity(chain: str, address: str) -> float | None:
             r = conn.execute("SELECT liquidity FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
@@ -233,6 +237,17 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                                  ts.path_due, ts.path_done, ts.path_failed, ts.path_skipped_budget, ts.cu)
                 except Exception:  # noqa: BLE001
                     log.exception("labeler tick crashed")
+                try:
+                    rs = await rugwatch.tick(chain_map)
+                    rug_totals["checks"] += rs.done
+                    rug_totals["warnings"] += rs.warnings
+                    rug_totals["failed"] += rs.failed
+                    rug_totals["cu"] += rs.cu
+                    if rs.due:
+                        log.info("rugwatch tick: due=%d done=%d warnings=%d failed=%d pending=%d cu=%d",
+                                 rs.due, rs.done, rs.warnings, rs.failed, rs.pending, rs.cu)
+                except Exception:  # noqa: BLE001
+                    log.exception("rugwatch tick crashed")
                 if once:
                     return
                 await asyncio.sleep(labeler.tick_interval_s)
@@ -360,7 +375,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          tape_new=tape_totals["new"], tape_cu=tape_totals["cu"],
                          tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"],
                          candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"},
-                         decision_totals=dict(decision_totals), safety_totals=dict(safety_totals))
+                         decision_totals=dict(decision_totals), safety_totals=dict(safety_totals),
+                         rug_totals=dict(rug_totals))
     conn.close()
     return summary
 
@@ -391,6 +407,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
         lines.append(f"  decisions: {s.decision_totals}")
     if s.safety_totals:
         lines.append(f"  safety verdicts: {s.safety_totals}")
+    if s.rug_totals:
+        lines.append(f"  rugwatch: {s.rug_totals}")
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     lines.append(f"  CU today={s.cu_today_total} cap={daily_cap}; projected Stage-0 CU/day={s.projected_cu_per_day} "
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")

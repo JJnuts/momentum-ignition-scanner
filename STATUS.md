@@ -19,7 +19,7 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T9b Pre-migration | todo | | optional; after Phase 3 |
 | T10 Solana safety | DONE | 2026-09-09 | 178/178 pytest; live: 4 SAFE / 2 UNSAFE on 6 candidates, token-2022 detected, verdicts feed vetoes/caps/bonus |
 | T11 Robinhood safety | DONE | 2026-09-09 | 187/187 pytest; live sim on 3 tokens: sell/buy/transfer OK, 0% tax, pool round-trip fallback exercised; Blockscout unreachable -> concentration is a soft flag |
-| T12 Rug watch | todo | | |
+| T12 Rug watch | DONE | 2026-09-09 | 195/195 pytest: schedule 3 rows, healthy no warning, -60% liquidity warns ONCE, safety flip warns once with reasons, both reasons combine, market-data fallback + budget, grace -> failed; runner ticks it; schema v7 live |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
 | T14–T15 Phase 5 | todo | | |
@@ -206,6 +206,12 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   soft `top10_unknown` (design decision: must not cap the chain forever).
 - QA: my first version made an unavailable proxy a hard UNKNOWN (would have capped all Robinhood at IGNITION);
   live run exposed it; changed to a soft flag with tests for both outcomes.
+
+## T12 notes (2026-09-09)
+- `scanner/rugwatch.py`: schedule/tick/pending_warnings/mark_delivered; liquidity from scan_rows else
+  market_data_single; safety re-check forced via SafetyChecker; per-alert per-reason dedupe via `_already_warned`.
+  Runner: ticked in the label loop every 30 s; summary prints rug totals. No alerts exist until T13, so the live
+  check is limited to a clean restart with schema v7 and an idle tick.
 
 ## Commands
     python -m pytest              # unit tests

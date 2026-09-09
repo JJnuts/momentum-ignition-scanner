@@ -274,5 +274,17 @@
       "rpc_rps": 3
     },
     "rpc_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) momentum-ignition-scanner/1.0"
+  },
+  "rugwatch": {
+    "_comment": "T12: re-check alerted tokens; one RUG WARNING per alert per reason. Liquidity from scan_rows (free) else market_data_single (8 CU); safety re-check forced (25 CU Solana / RPC Robinhood).",
+    "recheck_minutes": [
+      10,
+      30,
+      60
+    ],
+    "liq_drop_pct": 40.0,
+    "scan_row_match_window_s": 120,
+    "grace_s": 900,
+    "daily_cu_budget": 20000
   }
 }
