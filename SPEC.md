@@ -631,3 +631,28 @@ timestamp boundaries (several trades share one second on Solana).
   contact until the tape spans >= 600 s (cap 6 pages = 72 CU) so the anchor
   has a trailing baseline; quiet tokens stop after the initial 2 pages.
 - Replaces the provisional "recent WATCH nominations" active set.
+
+---------------------------------------------------------------------------
+## 20. Scoring, tiers and decision timing (T9, 2026-09-09)
+
+`scanner/scoring.py`; decisions persisted to `decisions` (schema v6), one per
+candidate per poll, with per-component points, inputs and the DATA timestamp
+each component used (tape as_of for tape components, Stage-1 nomination ts
+for efficiency / holder growth). T13 reads `alertable` rows.
+- Weights (SPEC s10): participation 30 (unique buyers 5->15, buyer:seller
+  1.0->1.3, new-wallet share 0.15->0.40, averaged), order flow 25 (OFI30
+  0->0.5 for 20 + 5 if OFI10 >= 0.10), efficiency 15 (Stage-1 eff pct
+  40->100), structure 15 (price >= aVWAP 5, CLV 2-of-3 5, higher lows 5),
+  holder growth 10 (0->3% vs the 5-min-ago page row; often unavailable for
+  page entrants -> 0), safety 5 (T10).
+- Tiers CONFIRMED >= 75, IGNITION >= 55, else WATCH; any hard veto -> VETO.
+- Anchor = tape onset if found, else the Stage-1 nomination time (source
+  recorded). since_anchor uses the tape's newest trade, not wall clock.
+  Eligibility window widened from [30, 90] to [30, 180] s because the tape
+  polls every 60 s; a 60-s window would be hit by at most one poll.
+- Offline check on recent candidates: BRA 76 CONFIRMED (late, 405 s),
+  XBT 75 at 61 s and BUG 74 at 52 s (eligible -> would alert), OTC 44 WATCH
+  (participation 30 but OFI 0: buyers without aggression), three VETO rows.
+  Holder growth was 0 for every candidate (page entrants have no prior
+  snapshot) - a known weakness of that component, worth revisiting at
+  Milestone C.

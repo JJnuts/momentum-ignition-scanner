@@ -15,7 +15,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T6 Trade features | DONE | 2026-09-09 | 121/121 pytest incl. no-lookahead invariant; features computed on 8 real tapes look right; per-poll snapshots persisted (schema v4) |
 | T7 Wash + vetoes | DONE | 2026-09-09 | 136/136 pytest; planted wash tape >= 0.6, organic <= 0.3, dev-dump trips DISTRIBUTION with OFI positive; real tapes separate cleanly; live enrichments cached |
 | T8 Candidate manager | DONE | 2026-09-09 | 144/144 pytest: 30 nominations -> cap 12 + weakest-oldest eviction, stay/expire, veto+cooldown, degrade + day rollover, restart restore, first-contact depth |
-| T9–T9b Phase 2 | todo | | |
+| T9 Scoring + timing | DONE | 2026-09-09 | 160/160 pytest: fixture vectors -> 95 CONFIRMED / 65 IGNITION / 46 WATCH / VETO override; +20 s and +181 s not eligible; components carry data timestamps; decisions persisted |
+| T9b Pre-migration | todo | | optional; after Phase 3 |
 | T10–T12 Phase 3 | todo | | T10 = RPC-based (Birdeye security is Premium-only) |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
@@ -166,6 +167,15 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   degrade check used the ledger's wall-clock "today" while the manager runs on an injectable clock -> now
   `total_since(day_start)` by the manager's clock; (3) an older poller test now hit first-contact depth
   (fixture spans 200 s) -> that test pins first_contact_min_span_s=0.
+
+## T9 notes (2026-09-09)
+- `scanner/scoring.py`: score_components (6 components, linear lo->hi mapping), decide (tier, anchor source,
+  eligibility, alertable), persist_decision (schema v6 `decisions`), latest_stage1_features (efficiency and
+  holder growth come from the WATCH nomination's features_json). Runner: decision per candidate per poll,
+  logged with the component breakdown and `*** ALERTABLE ***` when tier >= IGNITION inside the window.
+- Config `scoring` (weights, mappings, tiers, window [30,180]); `alerts` now holds delivery policy only (T13).
+- QA: my hand-computed expectation for the partial vector was wrong (45.8 = WATCH); code was right; test fixed
+  and a true IGNITION vector (65.5) added.
 
 ## Commands
     python -m pytest              # unit tests

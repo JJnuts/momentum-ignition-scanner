@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA: list[str] = [
     # key/value state (schema version, cursors, daily budget counters)
@@ -200,11 +200,34 @@ MIGRATIONS: dict[int, list[str]] = {
             PRIMARY KEY(chain, address, kind)
         )""",
     ],
+    6: [  # T9: scored decisions (one per candidate per poll); T13 reads alertable rows
+        """CREATE TABLE IF NOT EXISTS decisions(
+            id               INTEGER PRIMARY KEY,
+            chain            TEXT    NOT NULL,
+            address          TEXT    NOT NULL,
+            eval_ts          INTEGER NOT NULL,
+            as_of            INTEGER,
+            anchor_ts        INTEGER,
+            anchor_source    TEXT,
+            since_anchor_s   INTEGER,
+            score            REAL    NOT NULL,
+            tier             TEXT    NOT NULL,      -- VETO | CONFIRMED | IGNITION | WATCH
+            eligible         INTEGER NOT NULL,
+            alertable        INTEGER NOT NULL,
+            hard_vetoes      TEXT,
+            soft_flags       TEXT,
+            components_json  TEXT    NOT NULL,      -- per component: points, inputs, data_ts
+            tape_features_id INTEGER,
+            alerted_ts       INTEGER                -- set by T13 when a ping is sent
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_decisions_chain_addr_ts ON decisions(chain, address, eval_ts)",
+        "CREATE INDEX IF NOT EXISTS ix_decisions_alertable ON decisions(alertable, alerted_ts)",
+    ],
 }
 
 EXPECTED_TABLES = {
     "meta", "scan_rows", "nominations", "candidates", "trades",
-    "alerts", "labels", "safety", "cu_ledger", "tape_features",
+    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions",
 }
 
 

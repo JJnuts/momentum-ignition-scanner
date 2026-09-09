@@ -111,14 +111,9 @@
     "veto_cooldown_min": 20
   },
   "alerts": {
+    "_comment": "T13 delivery policy (cooldowns, caps, channels). Tier thresholds live under scoring.",
     "cooldown_min": 20,
-    "max_per_hour_per_chain": 6,
-    "tier_ignition_score": 55,
-    "tier_confirmed_score": 75,
-    "eligible_after_anchor_s": [
-      30,
-      90
-    ]
+    "max_per_hour_per_chain": 6
   },
   "labeler": {
     "_comment": "close pass: scan_rows (free) -> multi_price (Lite+). path pass: one OHLCV 1m call at the final horizon per NOMINATION (45 CU) fills MFE/MAE for all horizons. Controls get close-based labels only.",
@@ -205,5 +200,49 @@
       "tag_flows_lookback_s": 1800,
       "daily_cu_budget": 40000
     }
+  },
+  "scoring": {
+    "_comment": "T9 (SPEC s10). score = participation 30 + orderflow 25 + efficiency 15 + structure 15 + holder_growth 10 + safety 5. Vetoes always win. Eligibility window in seconds after the anchor (tape onset, else Stage-1 nomination time); widened from [30,90] to [30,180] because the tape polls every 60 s. FROZEN priors.",
+    "weights": {
+      "participation": 30,
+      "orderflow": 25,
+      "efficiency": 15,
+      "structure": 15,
+      "holder_growth": 10,
+      "safety": 5
+    },
+    "participation": {
+      "buyers_lo": 5,
+      "buyers_hi": 15,
+      "ratio_lo": 1.0,
+      "ratio_hi": 1.3,
+      "new_wallet_lo": 0.15,
+      "new_wallet_hi": 0.4
+    },
+    "orderflow": {
+      "ofi_lo": 0.0,
+      "ofi_hi": 0.5,
+      "recent_min": 0.1,
+      "recent_points": 5
+    },
+    "efficiency": {
+      "pct_lo": 40,
+      "pct_hi": 100
+    },
+    "structure": {
+      "avwap_points": 5,
+      "clv_points": 5,
+      "higher_lows_points": 5
+    },
+    "holder_growth": {
+      "pct_lo": 0.0,
+      "pct_hi": 3.0
+    },
+    "tier_ignition_score": 55,
+    "tier_confirmed_score": 75,
+    "eligible_after_anchor_s": [
+      30,
+      180
+    ]
   }
 }

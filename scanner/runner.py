@@ -20,6 +20,7 @@ from .stage1 import Stage1
 from .candidates import CandidateManager
 from .enrichment import Enricher
 from .features import compute as compute_features
+from .scoring import decide, latest_stage1_features, persist_decision
 from .tape import TapePoller, TapeStore, persist_features
 from .wash import evaluate as evaluate_wash
 
@@ -69,6 +70,7 @@ class RunSummary:
     tape_skipped_budget: int = 0
     tape_errors: int = 0
     candidate_stats: dict = field(default_factory=dict)
+    decision_totals: dict = field(default_factory=dict)
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -108,6 +110,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         stage2_cfg = cfg.raw.get("stage2", {})
         enricher = Enricher(conn, client, ledger, stage2_cfg.get("enrichment", {}), daily_cap)
         wash_cfg = stage2_cfg.get("wash", {})
+        scoring_cfg = cfg.raw.get("scoring", {})
+        decision_totals: dict[str, int] = {}
 
         def latest_liquidity(chain: str, address: str) -> float | None:
             r = conn.execute("SELECT liquidity FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
@@ -247,17 +251,30 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                             flows = await enricher.tag_flows(ch, address)
                             w = evaluate_wash(trades, f, wash_cfg, liquidity=latest_liquidity(ch.name, address),
                                               holdings_pct=holdings, tag_flows=flows)
+                            cand = manager.active_set.get((ch.name, address))
+                            s1_feats, s1_ts = latest_stage1_features(conn, ch.name, address)
+                            d = decide(ch.name, address, f, w, scoring_cfg, eval_ts, s1_features=s1_feats, s1_ts=s1_ts,
+                                       fallback_anchor_ts=cand.anchor_ts if cand else None)
                             conn.execute("BEGIN")
                             try:
-                                persist_features(conn, ch.name, address, f, eval_ts, wash=w)
+                                tf_id = persist_features(conn, ch.name, address, f, eval_ts, wash=w)
+                                persist_decision(conn, d, tape_features_id=tf_id)
                                 conn.execute("COMMIT")
                             except Exception:
                                 conn.execute("ROLLBACK")
                                 raise
+                            decision_totals[d.tier] = decision_totals.get(d.tier, 0) + 1
+                            if d.alertable:
+                                decision_totals["alertable"] = decision_totals.get("alertable", 0) + 1
                             outcome = manager.on_tape(ch, address, f.ofi30.ofi, w.hard_vetoes, eval_ts,
                                                       anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
                             if outcome == "vetoed":
                                 store.drop(ch.name, address)
+                            log.info("decision %s %s: score=%.0f [%s] tier=%s anchor=%s(%s) since=%s eligible=%s%s",
+                                     ch.name, (cand.symbol if cand and cand.symbol else address[:8]), d.score,
+                                     " ".join(f"{c.name[:4]}={c.points:.0f}/{c.max_points:.0f}" for c in d.components),
+                                     d.tier, d.anchor_source, f"{d.since_anchor_s}s" if d.since_anchor_s is not None else "-",
+                                     d.eligible, " *** ALERTABLE ***" if d.alertable else "")
                             log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
                                      "vs_avwap=%s vs_anchor=%s clv=%s hl=%s | wash=%s veto=%s flag=%s%s",
                                      ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
@@ -308,7 +325,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          tape_polls=tape_totals["polls"], tape_fetched=tape_totals["fetched"],
                          tape_new=tape_totals["new"], tape_cu=tape_totals["cu"],
                          tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"],
-                         candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"})
+                         candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"},
+                         decision_totals=dict(decision_totals))
     conn.close()
     return summary
 
@@ -335,6 +353,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
                  f"budget_skips={s.tape_skipped_budget} errors={s.tape_errors}")
     if s.candidate_stats:
         lines.append(f"  candidates: {s.candidate_stats}")
+    if s.decision_totals:
+        lines.append(f"  decisions: {s.decision_totals}")
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     lines.append(f"  CU today={s.cu_today_total} cap={daily_cap}; projected Stage-0 CU/day={s.projected_cu_per_day} "
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")
