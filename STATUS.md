@@ -22,7 +22,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T12 Rug watch | DONE | 2026-09-09 | 195/195 pytest: schedule 3 rows, healthy no warning, -60% liquidity warns ONCE, safety flip warns once with reasons, both reasons combine, market-data fallback + budget, grace -> failed; runner ticks it; schema v7 live |
 | T13 Discord alerts | DONE | 2026-09-09 | 205/205 pytest; test card delivered to the test webhook; policy (cooldown/upgrade/hourly cap), rug-warning delivery, heartbeat, dry-run |
 | Milestone B | RUNNING | started 2026-09-09 | pings ON to the TEST channel; thresholds FROZEN until n >= 100 IGNITION+CONFIRMED alerts per chain |
-| T14–T15 Phase 5 | todo | | |
+| T14 tune.py | DONE | 2026-09-09 | 210/210 pytest: synthetic planted signal ranks top, noise ranks last, expectancy exact on planted outcomes, report renders with/without data; real report: nominations 1.73x control, eff_5m top feature |
+| T15 Replay backtester | todo | | |
 
 ## T0 notes (2026-09-08)
 - Layout: `scanner/` package (`config`, `plans`, `db`, `recorder`, `logging_setup`, `__main__`),
@@ -222,6 +223,13 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - QA: one policy test had the wrong expectation (hourly cap still applies after a cooldown expires; code right).
 - Live: a labelled TEST CARD built from the latest CONFIRMED decision posted to the test webhook (message id
   returned). A console print of the card then hit cp1252 - the runner reconfigures stdout to UTF-8 so it is safe.
+
+## T14 notes (2026-09-09)
+- `scanner/tune.py`: load_events (nomination/control/alert + labels + decision/tape context for alerts), is_win /
+  is_big_win / is_rug, feature_lifts, expectancy (rules A/B), time_to_peak, build_report (markdown). CLI `tune`.
+  Reports land in `reports/` (git-ignored).
+- First real report (SPEC s25): Stage 1 lift 1.73x vs control; impact efficiency top feature; rVol level not
+  predictive past the gate; cohort z inverse; -20% stop hit by ~15% at +15m; coarse expectancy positive.
 
 ## Commands
     python -m pytest              # unit tests

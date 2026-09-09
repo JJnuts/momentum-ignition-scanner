@@ -747,3 +747,27 @@ for the message id, Retry-After on 429. No webhook -> dry run (persist only).
 Test card posted 2026-09-09 (msg 1547263336356380765) - delivery and layout
 verified. Thresholds are FROZEN from here until n >= 100 IGNITION+CONFIRMED
 alerts per chain (Milestone B).
+
+---------------------------------------------------------------------------
+## 25. tune.py (T14, 2026-09-09) and the first real read of the data
+
+`python -m scanner tune [--since-days N] [--out reports/x.md]` (analysis only).
+Joins nominations / controls / alerts to their labels; win = MFE(+15m) >= +30%
+(controls: close return, they carry no path); big win +50%/30m; rug = liq
+<= 40% of t0. Reports group summary, treatment-vs-control lift, per-feature
+lift (top half vs bottom half by median, within the treatment group), MFE/MAE
+percentiles, time-to-peak, and expectancy under the fixed rule approximated at
+horizon granularity (stop hit if MAE_h <= -20%; rule A time-stop exit at +15,
+rule B trailing exit at +30). T15 evaluates exact paths.
+
+First read (Milestone A data, ~6 h, n=193 nominations vs 118 controls):
+- Stage 1 has real lift: 18% win vs 10% control (1.73x). Alerts: n=5, noise.
+- Impact efficiency is the strongest feature (eff_5m 1.63x). rVol LEVEL above
+  the gate is NOT predictive (0.93x) - the gate matters, more rVol does not.
+  cohort_z is inverse (0.65x): a high z = crowded page position = late.
+  holder growth (n=50) and the Robinhood delta features are inverse but
+  small-n. This is exactly the evidence the Milestone C pass will use.
+- MAE at +15m: p25 -12%, p10 -27% -> a -20% stop is hit by ~15% of
+  nominations; time-to-peak is bimodal (+5m: 38, +60m: 49 of 139).
+- Expectancy (coarse): rule A +4.5% mean / 53% win, rule B +10.2% / 69%.
+  Positive, small n, horizon-granular. Do not size on it yet.

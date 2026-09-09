@@ -8,3 +8,4 @@ __pycache__/
 secrets.txt
 secrets.env
 env.txt
+reports/
