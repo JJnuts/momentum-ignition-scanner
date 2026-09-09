@@ -684,3 +684,33 @@ for efficiency / holder growth). T13 reads `alertable` rows.
   top-10 (36% and 40%, right at the prior); one SAFE token had bundlers at
   96.7% of supply -> capped; 4 of 6 were token-2022 mints (no risky
   extensions). RPC latency negligible.
+
+---------------------------------------------------------------------------
+## 22. Robinhood safety (T11, 2026-09-09) - rebuilt from the old bot's design
+
+`scanner/evm_safety.py` + the EVM branch of `SafetyChecker`. Chain-native:
+Blockscout is now behind a Cloudflare JS challenge for every endpoint (even
+with a browser UA), and the public RPC rejects Python's default User-Agent
+(403), rate-limits bursts (429) and times out full-range eth_getLogs queries,
+so holder maps cannot be rebuilt from Transfer logs at ~10 blocks/s.
+- HONEYPOT / TAX via eth_simulateV1 (state-persisting call batches, verified
+  live): sell = a real holder from OUR tape (top recent buyer with balance)
+  transfers to the pool counterparty; buy = counterparty transfers out to a
+  fresh wallet; transfer = fresh -> fresh. Uniswap v4 custody means the
+  counterparty is the PoolManager (0x8366a39c...), which holds all v4 token
+  balances (balanceOf confirmed). Taxes measured by balanceOf deltas. A
+  revert on any path or tax > 5% -> UNSAFE. No tape holder -> pool
+  round-trip fallback (buy first, then sell from the fresh wallet).
+- OWNER via owner(): revert -> none, zero -> renounced, address -> active
+  (soft flag; the old bot's default). Verified-source / static-pattern
+  checks need Blockscout -> not available.
+- CONCENTRATION: Birdeye top_traders holdVolume is Solana-only (None on RH),
+  and no other holder source is reachable, so top-10 is a soft
+  `top10_unknown` flag on RH. If a proxy value ever exists it can PROVE
+  unsafe (> 35%) but its absence never blocks. Robinhood can therefore reach
+  CONFIRMED again; concentration risk there is accepted and stated on the
+  card (T13).
+- Bonus (SAFE only): all taxes 0 +2, no owner / renounced +1, proxy <= 10% +1.
+- Live on 3 candidates (75 CU, 0 RPC errors): all paths OK, 0% tax, owner
+  none; one used the pool round-trip fallback.
+- RPC client: browser-like UA, ~3 rps pacing, one retry on 429.

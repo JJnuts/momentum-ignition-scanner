@@ -209,16 +209,30 @@ class SafetyChecker:
         self.rpc_errors = 0
 
     async def _rpc(self, url: str, method: str, params: list[Any]) -> dict[str, Any] | None:
+        """JSON-RPC POST with a browser-like User-Agent (the Robinhood RPC returns 403 to Python's default UA)
+        and a small pacing delay + one retry on 429 (the public RPC rate-limits bursts)."""
+        import asyncio as _asyncio
         if self._session is None:
-            self._session = aiohttp.ClientSession()
-        try:
-            async with self._session.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-                                          timeout=aiohttp.ClientTimeout(total=float(self.s["rpc_timeout_s"]))) as r:
-                return await r.json()
-        except (aiohttp.ClientError, TimeoutError, ValueError) as e:  # noqa: PERF203
-            self.rpc_errors += 1
-            log.warning("rpc %s failed: %s", method, e)
-            return None
+            self._session = aiohttp.ClientSession(headers={"user-agent": str(self.s.get("rpc_user_agent") or "momentum-scanner/1.0")})
+        rps = float((self.s.get("evm") or {}).get("rpc_rps", 3))
+        for attempt in range(2):
+            try:
+                await _asyncio.sleep(1.0 / rps if rps > 0 else 0)
+                async with self._session.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                                              timeout=aiohttp.ClientTimeout(total=float(self.s["rpc_timeout_s"]))) as r:
+                    if r.status == 429 and attempt == 0:
+                        await _asyncio.sleep(2.0)
+                        continue
+                    if r.status != 200:
+                        self.rpc_errors += 1
+                        log.warning("rpc %s HTTP %s", method, r.status)
+                        return None
+                    return await r.json()
+            except (aiohttp.ClientError, TimeoutError, ValueError) as e:  # noqa: PERF203
+                self.rpc_errors += 1
+                log.warning("rpc %s failed: %s", method, e)
+                return None
+        return None
 
     async def close(self) -> None:
         if self._session is not None:
@@ -267,9 +281,7 @@ class SafetyChecker:
                 return c
         now = int(self._clock())
         if ch.birdeye_chain != "solana":
-            # T11 supplies the EVM honeypot simulator; until then EVM safety is UNKNOWN (never SAFE by default)
-            res = SafetyResult(ch.name, address, now, "UNKNOWN", [Check("honeypot_sim", None)], 0.0, [], ["honeypot_sim"],
-                               {"note": "EVM safety arrives with T11"})
+            res = await self._check_evm(ch, address, now)
             self._store(res)
             return res
         mint = None
@@ -291,3 +303,54 @@ class SafetyChecker:
                            {"mint": mint, "profile": profile})
         self._store(res)
         return res
+
+    # ---- EVM (T11) -----------------------------------------------------------------------------
+    def _recent_buyers(self, chain: str, address: str, limit: int = 5) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT wallet, SUM(usd) AS u FROM trades WHERE chain=? AND address=? AND side='buy' AND wallet IS NOT NULL "
+            "GROUP BY wallet ORDER BY u DESC LIMIT ?", (chain, address, limit)).fetchall()
+        return [r["wallet"] for r in rows]
+
+    async def _check_evm(self, ch: ChainConfig, address: str, now: int) -> SafetyResult:
+        from . import evm_safety as ev
+        s = ev._settings(self.s.get("evm"))
+        url = self.rpc_urls.get(ch.name)
+        if not url:
+            return SafetyResult(ch.name, address, now, "UNKNOWN", [Check("honeypot_sim", None, "no rpc url")], 0.0, [],
+                                ["honeypot_sim"], {"note": "no RPC url configured"})
+        rpc = lambda m, p: self._rpc(url, m, p)  # noqa: E731
+        counterparty = (s.get("pool_manager") or {}).get(ch.name)
+        sources: dict[str, Any] = {"counterparty": counterparty}
+        supply = await ev.read_uint_call(rpc, address, ev.SEL_TOTAL_SUPPLY)
+        decimals = await ev.read_uint_call(rpc, address, "0x313ce567")
+        owner_state, owner_addr = await ev.read_owner(rpc, address)
+        sources.update({"supply": supply, "decimals": decimals, "owner": owner_addr, "owner_state": owner_state})
+        sim = ev.SimReport(holder=None, counterparty=counterparty or "", error="no pool counterparty configured")
+        if counterparty:
+            cp_bal = await ev.read_uint_call(rpc, address, ev.calldata_balance_of(counterparty))
+            holder, holder_bal = None, None
+            for w in self._recent_buyers(ch.name, address):
+                b = await ev.read_uint_call(rpc, address, ev.calldata_balance_of(w))
+                if b and b > 0:
+                    holder, holder_bal = w, b
+                    break
+            sim = await ev.simulate_paths(rpc, address, holder, holder_bal, counterparty, cp_bal, s)
+            sources["sim"] = {"holder": sim.holder, "error": sim.error,
+                              "paths": [{"name": p.name, "ok": p.ok, "sent": p.sent, "received": p.received,
+                                         "tax_pct": p.tax_pct, "error": p.error} for p in sim.paths]}
+        top10 = None
+        cu, _ = cu_cost("token_top_traders")
+        if self.client is not None and self._budget_ok(cu):
+            try:
+                traders = await self.client.token_top_traders(ch.birdeye_chain, address, time_frame="24h",
+                                                              sort_by="volume", limit=10)
+                self.calls += 1
+                self.cu_today += cu
+                top10 = ev.top10_proxy_pct(traders, supply, decimals)
+                sources["top10_proxy_pct"] = top10
+            except (EndpointUnavailable, BirdeyeError) as e:
+                log.warning("top traders failed for %s: %s", address[:8], e)
+        raw_checks, bonus = ev.evaluate_evm(sim, owner_state, top10, s)
+        checks = [Check(c.name, c.passed, c.value, c.limit, c.hard) for c in raw_checks]
+        verdict, reasons, flags = verdict_of(checks)
+        return SafetyResult(ch.name, address, now, verdict, checks, bonus if verdict == "SAFE" else 0.0, flags, reasons, sources)

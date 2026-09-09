@@ -18,7 +18,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T9 Scoring + timing | DONE | 2026-09-09 | 160/160 pytest: fixture vectors -> 95 CONFIRMED / 65 IGNITION / 46 WATCH / VETO override; +20 s and +181 s not eligible; components carry data timestamps; decisions persisted |
 | T9b Pre-migration | todo | | optional; after Phase 3 |
 | T10 Solana safety | DONE | 2026-09-09 | 178/178 pytest; live: 4 SAFE / 2 UNSAFE on 6 candidates, token-2022 detected, verdicts feed vetoes/caps/bonus |
-| T11–T12 Phase 3 | todo | | T11 Robinhood honeypot sim; T12 rug watch |
+| T11 Robinhood safety | DONE | 2026-09-09 | 187/187 pytest; live sim on 3 tokens: sell/buy/transfer OK, 0% tax, pool round-trip fallback exercised; Blockscout unreachable -> concentration is a soft flag |
+| T12 Rug watch | todo | | |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
 | T14–T15 Phase 5 | todo | | |
@@ -194,6 +195,17 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   drive candidate removal.
 - QA: one test expected a non-None parse for an empty payload (wrong expectation; fixed). Live check surfaced a
   token with bundlers at 96.7% of supply that was SAFE by the hard checks -> added the tier cap for CAP flags.
+
+## T11 notes (2026-09-09)
+- `scanner/evm_safety.py`: calldata encoders, eth_simulateV1 three-block plan (sell/buy/transfer with balanceOf
+  reads before/after, stateOverrides for ETH), owner() reader, top-10 proxy, evaluate_evm. `SafetyChecker._check_evm`
+  wires RPC reads (totalSupply, decimals, owner, balances), tape holder selection from `trades`, the sim, and the
+  top-traders proxy (25 CU). RPC calls now carry a browser UA, ~3 rps pacing and a 429 retry.
+- Findings: Blockscout Cloudflare-blocked (all endpoints); RPC 403 on default Python UA; full-range getLogs times
+  out; chunked getLogs 429s; Birdeye holdVolume is Solana-only -> Robinhood concentration unverifiable ->
+  soft `top10_unknown` (design decision: must not cap the chain forever).
+- QA: my first version made an unavailable proxy a hard UNKNOWN (would have capped all Robinhood at IGNITION);
+  live run exposed it; changed to a soft flag with tests for both outcomes.
 
 ## Commands
     python -m pytest              # unit tests

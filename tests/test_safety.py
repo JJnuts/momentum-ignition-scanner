@@ -108,6 +108,9 @@ class FakeClient:
             raise self.error
         return self.payload
 
+    async def token_top_traders(self, chain, address, **kw):
+        return []
+
 
 class FakeRpcChecker(SafetyChecker):
     def __init__(self, *a, rpc_payload=None, **kw):
@@ -171,8 +174,8 @@ async def test_budget_guard_skips_holder_profile(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_evm_is_unknown_until_t11(tmp_path):
+async def test_evm_without_rpc_data_is_unknown(tmp_path):
     conn = open_db(tmp_path / "t.sqlite")
-    ch = FakeRpcChecker(conn, FakeClient(profile()), CULedger(conn), SCFG, 100_000, {"solana": "http://rpc"})
-    r = await ch.check(RH, "0xT")
-    assert r.verdict == "UNKNOWN" and ch.calls == 0 and ch.rpc_calls == 0 and r.reasons == ["honeypot_sim"]
+    ch = FakeRpcChecker(conn, FakeClient(profile()), CULedger(conn), SCFG, 100_000, {"solana": "http://rpc", "robinhood": "http://rh"})
+    r = await ch.check(RH, "0xT")          # every RPC answer is None -> sim cannot run -> UNKNOWN, never SAFE
+    assert r.verdict == "UNKNOWN" and "honeypot_sim" in r.reasons and "top10_unknown" in r.flags

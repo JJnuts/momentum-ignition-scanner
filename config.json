@@ -261,6 +261,18 @@
       "sniper_flag_pct": 20.0,
       "smart_bonus_pct": 1.0,
       "min_holders": 30
-    }
+    },
+    "evm": {
+      "_comment": "T11 Robinhood: eth_simulateV1 sell/buy/transfer with balance-delta taxes; owner() soft; top-10 is a LOWER BOUND from Birdeye top traders (Blockscout is Cloudflare-blocked; RPC log queries time out). Any path reverting or taxed > max_tax_pct -> UNSAFE.",
+      "max_tax_pct": 5.0,
+      "sim_amount_frac": 0.01,
+      "top10_max_pct": 35.0,
+      "pool_manager": {
+        "robinhood": "0x8366a39cc670b4001a1121b8f6a443a643e40951"
+      },
+      "eth_override_wei": 1000000000000000000,
+      "rpc_rps": 3
+    },
+    "rpc_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) momentum-ignition-scanner/1.0"
   }
 }
