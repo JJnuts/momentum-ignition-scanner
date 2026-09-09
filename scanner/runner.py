@@ -20,6 +20,7 @@ from .stage1 import Stage1
 from .candidates import CandidateManager
 from .enrichment import Enricher
 from .features import compute as compute_features
+from .safety import SafetyChecker
 from .scoring import decide, latest_stage1_features, persist_decision
 from .tape import TapePoller, TapeStore, persist_features
 from .wash import evaluate as evaluate_wash
@@ -71,6 +72,7 @@ class RunSummary:
     tape_errors: int = 0
     candidate_stats: dict = field(default_factory=dict)
     decision_totals: dict = field(default_factory=dict)
+    safety_totals: dict = field(default_factory=dict)
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -120,6 +122,9 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         wash_cfg = stage2_cfg.get("wash", {})
         scoring_cfg = cfg.raw.get("scoring", {})
         decision_totals: dict[str, int] = {}
+        safety = SafetyChecker(conn, client, ledger, cfg.raw.get("safety", {}), daily_cap,
+                               {"solana": cfg.secret("SOLANA_RPC_URL"), "robinhood": cfg.secret("ROBINHOOD_RPC_URL")})
+        safety_totals: dict[str, int] = {}
 
         def latest_liquidity(chain: str, address: str) -> float | None:
             r = conn.execute("SELECT liquidity FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
@@ -282,8 +287,16 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                                   holdings_pct=holdings, tag_flows=flows)
                 cand = manager.active_set.get((ch.name, address))
                 s1_feats, s1_ts = latest_stage1_features(conn, ch.name, address)
+                sr = await safety.check(ch, address)          # cached 10 min; RPC + one 25-CU holder profile
+                safety_totals[sr.verdict] = safety_totals.get(sr.verdict, 0) + 1
                 d = decide(ch.name, address, f, w, scoring_cfg, eval_ts, s1_features=s1_feats, s1_ts=s1_ts,
-                           fallback_anchor_ts=cand.anchor_ts if cand else None)
+                           fallback_anchor_ts=cand.anchor_ts if cand else None,
+                           safety_bonus=sr.bonus, safety_verdict=sr.verdict, safety_reasons=sr.reasons,
+                           safety_flags=sr.flags)
+                if not sr.from_cache:
+                    log.info("safety %s %s: %s bonus=%.0f reasons=%s flags=%s", ch.name,
+                             (cand.symbol if cand and cand.symbol else address[:8]), sr.verdict, sr.bonus,
+                             ",".join(sr.reasons) or "-", ",".join(sr.flags) or "-")
                 conn.execute("BEGIN")
                 try:
                     tf_id = persist_features(conn, ch.name, address, f, eval_ts, wash=w)
@@ -295,7 +308,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                 decision_totals[d.tier] = decision_totals.get(d.tier, 0) + 1
                 if d.alertable:
                     decision_totals["alertable"] = decision_totals.get("alertable", 0) + 1
-                outcome = manager.on_tape(ch, address, f.ofi30.ofi, w.hard_vetoes, eval_ts,
+                outcome = manager.on_tape(ch, address, f.ofi30.ofi, d.hard_vetoes, eval_ts,
                                           anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
                 if outcome == "vetoed":
                     store.drop(ch.name, address)
@@ -328,6 +341,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await safety.close()
         label_counts = labeler.counts()
 
     rh_total = rh_5m = None
@@ -346,7 +360,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          tape_new=tape_totals["new"], tape_cu=tape_totals["cu"],
                          tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"],
                          candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"},
-                         decision_totals=dict(decision_totals))
+                         decision_totals=dict(decision_totals), safety_totals=dict(safety_totals))
     conn.close()
     return summary
 
@@ -375,6 +389,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
         lines.append(f"  candidates: {s.candidate_stats}")
     if s.decision_totals:
         lines.append(f"  decisions: {s.decision_totals}")
+    if s.safety_totals:
+        lines.append(f"  safety verdicts: {s.safety_totals}")
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     lines.append(f"  CU today={s.cu_today_total} cap={daily_cap}; projected Stage-0 CU/day={s.projected_cu_per_day} "
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")

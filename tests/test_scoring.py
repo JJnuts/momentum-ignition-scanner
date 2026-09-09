@@ -135,3 +135,27 @@ def test_settings_merge_and_weights_sum_to_100():
     assert sum(s["weights"].values()) == 100
     s2 = _settings({"weights": {"safety": 0}, "tier_ignition_score": 40})
     assert s2["weights"]["participation"] == 30 and s2["weights"]["safety"] == 0 and s2["tier_ignition_score"] == 40
+
+
+def test_safety_verdict_integration():
+    # UNSAFE -> hard veto with reasons; UNKNOWN -> CONFIRMED capped at IGNITION + soft flag; SAFE -> bonus counts
+    d_unsafe = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW,
+                      safety_verdict="UNSAFE", safety_reasons=["mint_authority", "top10"])
+    assert d_unsafe.tier == "VETO" and d_unsafe.hard_vetoes == ["SAFETY:mint_authority+top10"] and not d_unsafe.alertable
+    d_unknown = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW, safety_verdict="UNKNOWN")
+    assert d_unknown.score == 95 and d_unknown.tier == "IGNITION" and "SAFETY_UNKNOWN" in d_unknown.soft_flags
+    assert d_unknown.alertable                                   # IGNITION inside the window still alerts
+    d_safe = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW,
+                    safety_verdict="SAFE", safety_bonus=5.0)
+    assert d_safe.score == 100 and d_safe.tier == "CONFIRMED"
+    d_capped = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW, safety_bonus=9.0)
+    assert {c.name: c.points for c in d_capped.components}["safety"] == 5   # bonus capped at the weight
+
+
+def test_soft_safety_flags_cap_confirmed_at_ignition():
+    d = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW,
+               safety_verdict="SAFE", safety_bonus=3.0, safety_flags=["bundler_holdings"])
+    assert d.score == 98 and d.tier == "IGNITION" and "SAFETY:bundler_holdings" in d.soft_flags and d.alertable
+    d2 = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW,
+                safety_verdict="SAFE", safety_bonus=3.0, safety_flags=["min_holders", "smart_trader_present"])
+    assert d2.tier == "CONFIRMED"      # informational flags do not cap

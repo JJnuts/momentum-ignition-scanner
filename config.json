@@ -244,5 +244,23 @@
       30,
       360
     ]
+  },
+  "safety": {
+    "_comment": "T10 Solana safety: free RPC (mint/freeze authority, token program) + Birdeye holder-profile (25 CU; top-10 %, dev/insider/bundler/sniper/smart_trader cohorts). UNSAFE = hard fail -> veto. UNKNOWN = a hard check had no data -> tier capped at IGNITION. Bonus 0..5 feeds the score. EVM (Robinhood) is UNKNOWN until T11's honeypot simulator.",
+    "cache_s": 600,
+    "daily_cu_budget": 20000,
+    "rpc_timeout_s": 12,
+    "solana": {
+      "top10_max_pct": 35.0,
+      "top10_bonus_pct": 20.0,
+      "dev_max_pct": 10.0,
+      "dev_bonus_pct": 3.0,
+      "insider_max_pct": 10.0,
+      "bundler_flag_pct": 15.0,
+      "bundler_bonus_pct": 5.0,
+      "sniper_flag_pct": 20.0,
+      "smart_bonus_pct": 1.0,
+      "min_holders": 30
+    }
   }
 }

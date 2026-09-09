@@ -661,3 +661,26 @@ for efficiency / holder growth). T13 reads `alertable` rows.
   tick adding up to 60 s, the first Stage-2 evaluation lands a median ~3 min
   after onset -> eligibility widened to [30, 360] s and first contact now
   runs immediately on nomination instead of waiting for the tick.
+
+---------------------------------------------------------------------------
+## 21. Solana safety (T10, 2026-09-09)
+
+`scanner/safety.py`, cached in `safety` (10 min), budgeted 20k CU/day.
+- Sources: free Solana RPC getAccountInfo(mint, jsonParsed) -> mint/freeze
+  authority + token program (+ token-2022 extensions); Birdeye holder-profile
+  (25 CU) -> top-10 % of supply, holder count, cohorts dev / insider /
+  bundler / sniper / smart_trader / kol (holders, % supply, pnl, buy/sell USD).
+- HARD (UNSAFE -> veto 'SAFETY:<reasons>'): mint authority set, freeze
+  authority set, top-10 > 35%, dev > 10%, insider > 10%.
+- SOFT flags: bundler >= 15%, sniper >= 20%, risky token-2022 extensions
+  (transferHook / transferFeeConfig / permanentDelegate / defaultAccountState)
+  -> tier CAPPED at IGNITION (SPEC s6 "bundle -> cap"); min_holders < 30 and
+  smart_trader_present are informational.
+- UNKNOWN (a hard check had no data) -> never SAFE; tier capped at IGNITION,
+  soft flag SAFETY_UNKNOWN. Robinhood is UNKNOWN until T11's honeypot sim.
+- Bonus 0..5 (SAFE only): top-10 <= 20% +2, dev <= 3% +1, bundler <= 5% +1,
+  smart traders >= 1% of supply +1 -> the score's safety component.
+- Live on 6 candidates (150 CU, 0 RPC errors): 4 SAFE (bonus 3), 2 UNSAFE on
+  top-10 (36% and 40%, right at the prior); one SAFE token had bundlers at
+  96.7% of supply -> capped; 4 of 6 were token-2022 mints (no risky
+  extensions). RPC latency negligible.

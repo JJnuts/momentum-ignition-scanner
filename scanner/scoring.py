@@ -35,6 +35,10 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+# soft safety flags that cap the tier at IGNITION (SPEC s6: bundle -> cap at IGNITION)
+CAP_FLAGS = {"bundler_holdings", "sniper_holdings", "token2022_extensions"}
+
+
 def _settings(cfg: dict[str, Any] | None) -> dict[str, Any]:
     s = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
     for k, v in (cfg or {}).items():
@@ -135,11 +139,25 @@ def score_components(f: TapeFeatures, s1: dict[str, Any] | None, s1_ts: int | No
 
 def decide(chain: str, address: str, f: TapeFeatures, wash: WashReport, cfg: dict[str, Any] | None,
            eval_ts: int, s1_features: dict[str, Any] | None = None, s1_ts: int | None = None,
-           fallback_anchor_ts: int | None = None, safety_bonus: float = 0.0) -> Decision:
+           fallback_anchor_ts: int | None = None, safety_bonus: float = 0.0,
+           safety_verdict: str | None = None, safety_reasons: list[str] | None = None,
+           safety_flags: list[str] | None = None) -> Decision:
+    """safety_verdict: SAFE | UNSAFE | UNKNOWN | None. UNSAFE -> hard veto 'SAFETY:<reasons>';
+    UNKNOWN -> tier capped at IGNITION (never CONFIRMED on unverified safety) + soft flag.
+    safety_flags in CAP_FLAGS (bundle / sniper / risky token-2022 extensions) also cap at IGNITION (SPEC s6)."""
     s = _settings(cfg)
     comps = score_components(f, s1_features, s1_ts, s, safety_bonus)
     score = round(sum(c.points for c in comps), 2)
     hard, soft = list(wash.hard_vetoes), list(wash.soft_flags)
+    cap = safety_verdict == "UNKNOWN"
+    if safety_verdict == "UNSAFE":
+        hard.append("SAFETY:" + "+".join(safety_reasons or ["unsafe"]))
+    elif safety_verdict == "UNKNOWN":
+        soft.append("SAFETY_UNKNOWN")
+    for flag in safety_flags or []:
+        if flag in CAP_FLAGS:
+            soft.append(f"SAFETY:{flag}")
+            cap = True
     if f.anchor_ts is not None:
         anchor_ts, source = f.anchor_ts, "tape"
     elif fallback_anchor_ts is not None:
@@ -152,7 +170,7 @@ def decide(chain: str, address: str, f: TapeFeatures, wash: WashReport, cfg: dic
     eligible = since is not None and int(lo) <= since <= int(hi)
     if hard:
         tier = "VETO"
-    elif score >= float(s["tier_confirmed_score"]):
+    elif score >= float(s["tier_confirmed_score"]) and not cap:
         tier = "CONFIRMED"
     elif score >= float(s["tier_ignition_score"]):
         tier = "IGNITION"

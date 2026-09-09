@@ -17,7 +17,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T8 Candidate manager | DONE | 2026-09-09 | 144/144 pytest: 30 nominations -> cap 12 + weakest-oldest eviction, stay/expire, veto+cooldown, degrade + day rollover, restart restore, first-contact depth |
 | T9 Scoring + timing | DONE | 2026-09-09 | 160/160 pytest: fixture vectors -> 95 CONFIRMED / 65 IGNITION / 46 WATCH / VETO override; +20 s and +181 s not eligible; components carry data timestamps; decisions persisted |
 | T9b Pre-migration | todo | | optional; after Phase 3 |
-| T10–T12 Phase 3 | todo | | T10 = RPC-based (Birdeye security is Premium-only) |
+| T10 Solana safety | DONE | 2026-09-09 | 178/178 pytest; live: 4 SAFE / 2 UNSAFE on 6 candidates, token-2022 detected, verdicts feed vetoes/caps/bonus |
+| T11–T12 Phase 3 | todo | | T11 Robinhood honeypot sim; T12 rug watch |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
 | T14–T15 Phase 5 | todo | | |
@@ -183,6 +184,16 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   tick -> the [30,180] window rejected ~half of first evaluations. Window widened to [30,360] and newly
   entered candidates are now polled + evaluated IMMEDIATELY on nomination (eval_lock serialises this with the
   tape tick). (3) `evaluate_candidates` extracted from the tape loop.
+
+## T10 notes (2026-09-09)
+- `scanner/safety.py`: parse_mint_account (RPC jsonParsed), parse_holder_profile (Birdeye), evaluate_solana
+  (hard/soft checks + bonus), verdict_of (UNSAFE > UNKNOWN > SAFE), SafetyChecker (RPC via aiohttp, holder
+  profile via client, cache in `safety`, budget). `scoring.decide` takes verdict/reasons/flags/bonus: UNSAFE ->
+  hard veto; UNKNOWN or a CAP flag (bundler/sniper/token-2022 ext) -> no CONFIRMED; bonus -> safety component.
+- Runner: safety checked per candidate per poll (cached), logged on fresh checks; `d.hard_vetoes` (wash + safety)
+  drive candidate removal.
+- QA: one test expected a non-None parse for an empty payload (wrong expectation; fixed). Live check surfaced a
+  token with bundlers at 96.7% of supply that was SAFE by the hard checks -> added the tier cap for CAP flags.
 
 ## Commands
     python -m pytest              # unit tests
