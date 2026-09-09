@@ -111,9 +111,14 @@
     "veto_cooldown_min": 20
   },
   "alerts": {
-    "_comment": "T13 delivery policy (cooldowns, caps, channels). Tier thresholds live under scoring.",
+    "_comment": "T13 Discord delivery policy. Tier thresholds live under scoring. use_test_channel (discord section) picks DISCORD_WEBHOOK_TEST vs DISCORD_WEBHOOK_LIVE; missing webhook = dry run.",
     "cooldown_min": 20,
-    "max_per_hour_per_chain": 6
+    "max_per_hour_per_chain": 6,
+    "heartbeat_interval_s": 86400,
+    "invalidation_cap_pct": 25.0,
+    "time_stop_min": 15,
+    "size_note_liq_frac": 0.01,
+    "username": "Momentum Ignition Scanner"
   },
   "labeler": {
     "_comment": "close pass: scan_rows (free) -> multi_price (Lite+). path pass: one OHLCV 1m call at the final horizon per NOMINATION (45 CU) fills MFE/MAE for all horizons. Controls get close-based labels only.",

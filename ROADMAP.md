@@ -160,6 +160,7 @@ CU spend, labeler coverage, raw recorder size. No threshold changes.
 
 **MILESTONE B — IGNITION pings ON. Thresholds FROZEN. Run until n ≥ 100
 IGNITION+CONFIRMED alerts per chain.** No tuning inside the window.
+  STARTED 2026-09-09 (test channel). MVP = T0–T13 complete.
 
 ---------------------------------------------------------------------------
 ## PHASE 5 — Analysis and reproducibility

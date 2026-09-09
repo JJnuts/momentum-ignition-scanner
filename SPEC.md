@@ -728,3 +728,22 @@ and warns on LIQUIDITY_DROP (<= -40% vs the alert) and/or SAFETY_FLIP
 reason; later re-checks never repeat it. Rows with warned=1 and
 delivered_ts NULL are the queue T13 posts as RUG WARNING (naming the token
 and how long ago it was alerted). No data for 15 min after due -> failed.
+
+---------------------------------------------------------------------------
+## 24. Discord alerts (T13, 2026-09-09) - MVP complete, Milestone B started
+
+`scanner/alerts.py`. One embed per alert (SPEC s7): market context, Stage-1
+ignition numbers, OFI/participation, wash + safety line (cohorts on Solana,
+sim paths + owner on Robinhood), price vs anchor/aVWAP, INVALIDATION (nearer
+of anchor low / aVWAP below price, capped at -25%), TIME STOP 15 min, size
+note (1% of liquidity per clip), score breakdown, links, contract address.
+Policy: 20-min per-token cooldown; re-ping ONLY on a tier upgrade inside the
+cooldown; 6 alerts/hour/chain with CONFIRMED-only overflow; state rebuilt
+from `alerts` on restart. Every send: `alerts` row, decisions.alerted_ts,
+rug-watch schedule (+10/+30/+60), outcome labels (ref_kind 'alert'). Rug
+warnings are posted from the rug-watch queue and marked delivered. Daily
+heartbeat. Webhook: browser User-Agent (Discord 403s the default), ?wait=true
+for the message id, Retry-After on 429. No webhook -> dry run (persist only).
+Test card posted 2026-09-09 (msg 1547263336356380765) - delivery and layout
+verified. Thresholds are FROZEN from here until n >= 100 IGNITION+CONFIRMED
+alerts per chain (Milestone B).

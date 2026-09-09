@@ -20,6 +20,7 @@ from .stage1 import Stage1
 from .candidates import CandidateManager
 from .enrichment import Enricher
 from .features import compute as compute_features
+from .alerts import Alerter, DiscordWebhook
 from .rugwatch import RugWatch
 from .safety import SafetyChecker
 from .scoring import decide, latest_stage1_features, persist_decision
@@ -75,6 +76,7 @@ class RunSummary:
     decision_totals: dict = field(default_factory=dict)
     safety_totals: dict = field(default_factory=dict)
     rug_totals: dict = field(default_factory=dict)
+    alert_stats: dict = field(default_factory=dict)
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -129,6 +131,20 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         safety_totals: dict[str, int] = {}
         rugwatch = RugWatch(conn, client, ledger, safety, cfg.raw.get("rugwatch", {}), cfg.birdeye_plan, daily_cap)
         rug_totals = {"checks": 0, "warnings": 0, "failed": 0, "cu": 0}
+        alerts_cfg = cfg.raw.get("alerts", {})
+        webhook_url = cfg.secret("DISCORD_WEBHOOK_TEST" if cfg.discord_use_test else "DISCORD_WEBHOOK_LIVE")
+        webhook = DiscordWebhook(webhook_url, str(alerts_cfg.get("user_agent") or Alerter.__init__.__globals__["DEFAULTS"]["user_agent"]),
+                                 str(alerts_cfg.get("username", "Momentum Ignition Scanner")))
+        alerter = Alerter(conn, webhook, alerts_cfg, rugwatch=rugwatch, labeler=labeler)
+        log.info("alerts: channel=%s webhook=%s", "test" if cfg.discord_use_test else "LIVE",
+                 "configured" if webhook.enabled else "MISSING -> dry run")
+
+        def latest_row(chain: str, address: str):
+            from .stage0 import ROW_COLUMNS as _RC
+            from .stage1 import _row_from_db as _rfd
+            r = conn.execute(f"SELECT {', '.join(_RC)} FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
+                             (chain, address)).fetchone()
+            return _rfd(r) if r else None
 
         def latest_liquidity(chain: str, address: str) -> float | None:
             r = conn.execute("SELECT liquidity FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
@@ -248,6 +264,17 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                                  rs.due, rs.done, rs.warnings, rs.failed, rs.pending, rs.cu)
                 except Exception:  # noqa: BLE001
                     log.exception("rugwatch tick crashed")
+                try:
+                    n = await alerter.deliver_rug_warnings(chain_map)
+                    if n:
+                        log.info("rug warnings delivered: %d", n)
+                    await alerter.heartbeat_if_due(lambda: (
+                        f"cycles sol={stats['solana'].cycles if 'solana' in stats else 0} "
+                        f"rh={stats['robinhood'].cycles if 'robinhood' in stats else 0} · nominations="
+                        f"{sum(s.s1_nominated for s in stats.values())} · alerts={alerter.stats['sent']} · "
+                        f"CU today={ledger.today_total():,}/{daily_cap:,}"))
+                except Exception:  # noqa: BLE001
+                    log.exception("alert delivery crashed")
                 if once:
                     return
                 await asyncio.sleep(labeler.tick_interval_s)
@@ -315,7 +342,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                 conn.execute("BEGIN")
                 try:
                     tf_id = persist_features(conn, ch.name, address, f, eval_ts, wash=w)
-                    persist_decision(conn, d, tape_features_id=tf_id)
+                    decision_id = persist_decision(conn, d, tape_features_id=tf_id)
                     conn.execute("COMMIT")
                 except Exception:
                     conn.execute("ROLLBACK")
@@ -323,6 +350,13 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                 decision_totals[d.tier] = decision_totals.get(d.tier, 0) + 1
                 if d.alertable:
                     decision_totals["alertable"] = decision_totals.get("alertable", 0) + 1
+                    try:
+                        outcome_alert = await alerter.consider(
+                            chain=ch, address=address, symbol=cand.symbol if cand else None, decision=d,
+                            decision_id=decision_id, feats=f, wash=w, safety=sr, row=latest_row(ch.name, address), s1=s1_feats)
+                        decision_totals[f"alert:{outcome_alert}"] = decision_totals.get(f"alert:{outcome_alert}", 0) + 1
+                    except Exception:  # noqa: BLE001
+                        log.exception("alert dispatch crashed for %s %s", ch.name, address[:8])
                 outcome = manager.on_tape(ch, address, f.ofi30.ofi, d.hard_vetoes, eval_ts,
                                           anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
                 if outcome == "vetoed":
@@ -357,6 +391,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await safety.close()
+            await webhook.close()
         label_counts = labeler.counts()
 
     rh_total = rh_5m = None
@@ -376,7 +411,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"],
                          candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"},
                          decision_totals=dict(decision_totals), safety_totals=dict(safety_totals),
-                         rug_totals=dict(rug_totals))
+                         rug_totals=dict(rug_totals), alert_stats=dict(alerter.stats))
     conn.close()
     return summary
 
@@ -409,6 +444,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
         lines.append(f"  safety verdicts: {s.safety_totals}")
     if s.rug_totals:
         lines.append(f"  rugwatch: {s.rug_totals}")
+    if s.alert_stats:
+        lines.append(f"  alerts: {s.alert_stats}")
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     lines.append(f"  CU today={s.cu_today_total} cap={daily_cap}; projected Stage-0 CU/day={s.projected_cu_per_day} "
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")

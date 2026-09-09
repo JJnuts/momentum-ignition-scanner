@@ -20,8 +20,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T10 Solana safety | DONE | 2026-09-09 | 178/178 pytest; live: 4 SAFE / 2 UNSAFE on 6 candidates, token-2022 detected, verdicts feed vetoes/caps/bonus |
 | T11 Robinhood safety | DONE | 2026-09-09 | 187/187 pytest; live sim on 3 tokens: sell/buy/transfer OK, 0% tax, pool round-trip fallback exercised; Blockscout unreachable -> concentration is a soft flag |
 | T12 Rug watch | DONE | 2026-09-09 | 195/195 pytest: schedule 3 rows, healthy no warning, -60% liquidity warns ONCE, safety flip warns once with reasons, both reasons combine, market-data fallback + budget, grace -> failed; runner ticks it; schema v7 live |
-| T13 Discord | todo | | |
-| Milestone B | todo | | |
+| T13 Discord alerts | DONE | 2026-09-09 | 205/205 pytest; test card delivered to the test webhook; policy (cooldown/upgrade/hourly cap), rug-warning delivery, heartbeat, dry-run |
+| Milestone B | RUNNING | started 2026-09-09 | pings ON to the TEST channel; thresholds FROZEN until n >= 100 IGNITION+CONFIRMED alerts per chain |
 | T14–T15 Phase 5 | todo | | |
 
 ## T0 notes (2026-09-08)
@@ -212,6 +212,16 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   market_data_single; safety re-check forced via SafetyChecker; per-alert per-reason dedupe via `_already_warned`.
   Runner: ticked in the label loop every 30 s; summary prints rug totals. No alerts exist until T13, so the live
   check is limited to a clean restart with schema v7 and an idle tick.
+
+## T13 notes (2026-09-09)
+- `scanner/alerts.py`: DiscordWebhook (UA, wait=true, 429 retry), AlertPolicy (cooldown / upgrade / per-chain hourly cap,
+  state from `alerts`), build_card / build_rug_card, Alerter (consider -> send -> persist alert + alerted_ts + rug
+  schedule + alert labels; deliver_rug_warnings; heartbeat_if_due via meta.last_heartbeat_ts). Runner: alertable
+  decisions go through `consider`; label loop delivers rug warnings + heartbeat; channel = test while
+  discord.use_test_channel is true.
+- QA: one policy test had the wrong expectation (hourly cap still applies after a cooldown expires; code right).
+- Live: a labelled TEST CARD built from the latest CONFIRMED decision posted to the test webhook (message id
+  returned). A console print of the card then hit cp1252 - the runner reconfigures stdout to UTF-8 so it is safe.
 
 ## Commands
     python -m pytest              # unit tests
