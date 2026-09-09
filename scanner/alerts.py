@@ -185,9 +185,29 @@ class AlertPolicy:
         self.sent_ts.setdefault(chain, []).append(now)
 
 
+TIER_EMOJI = {"IGNITION": "\U0001F525", "CONFIRMED": "\u2705", "WATCH": "\U0001F440"}
+COMP_LABEL = {"participation": "Participation", "orderflow": "Order flow", "efficiency": "Efficiency",
+              "structure": "Structure", "holder_growth": "Holders", "safety": "Safety"}
+
+
+def _bar(points: float, max_points: float, width: int = 8) -> str:
+    n = 0 if max_points <= 0 else int(round(width * max(0.0, min(1.0, points / max_points))))
+    return "\u2588" * n + "\u2591" * (width - n)
+
+
+def card_text(card: dict[str, Any]) -> str:
+    """All human-readable text of an embed (description + fields) - for logs and tests."""
+    parts = [card.get("description") or ""]
+    for f in card.get("fields") or []:
+        parts.append(f"{f.get('name', '')}\n{f.get('value', '')}")
+    return "\n".join(parts)
+
+
 def build_card(*, chain: ChainConfig, address: str, symbol: str | None, decision: Any, feats: Any, wash: Any,
                safety: Any, row: Any, s1: dict[str, Any] | None, settings: dict[str, Any], now: int) -> dict[str, Any]:
-    """Discord embed for an alert. `row` = latest TokenRow-like (market_cap, liquidity, holder, pc_5m, price, age_s)."""
+    """Discord embed for an alert. `row` = latest TokenRow-like (market_cap, liquidity, holder, pc_5m, price, age_s).
+    Layout: headline (score / anchor / safety) + link row, then inline field groups Market | Flow | Price,
+    Wash | Safety, then the trade plan (INVALIDATION / TIME STOP / size note) and the score breakdown."""
     tier = decision.tier
     sym = symbol or address[:6]
     mcap = getattr(row, "market_cap", None)
@@ -209,59 +229,73 @@ def build_card(*, chain: ChainConfig, address: str, symbol: str | None, decision
     if price and (inv_pct is None or inv_pct < -cap):
         inv, inv_pct = price * (1 - cap / 100), -cap
     clip = liq * float(settings["size_note_liq_frac"]) if liq else None
-    # safety line
+
+    # --- safety block -------------------------------------------------------------------------------
     sr = safety
+    verdict = sr.verdict if sr is not None else "-"
+    safe_lines: list[str] = [f"**{verdict}**" + (f" ({', '.join(sr.reasons)})" if sr is not None and sr.reasons else "")]
     if sr is not None:
-        safe_line = f"safety **{sr.verdict}**"
-        if sr.reasons:
-            safe_line += " (" + ", ".join(sr.reasons) + ")"
         if sr.flags:
-            safe_line += " flags: " + ", ".join(sr.flags)
+            safe_lines.append("flags: " + ", ".join(sr.flags))
         src = sr.sources or {}
         prof = (src.get("profile") or {}) if isinstance(src, dict) else {}
         if prof:
             co = prof.get("cohorts") or {}
-            safe_line += (f"\ntop10 {_f(prof.get('top10_pct'), '{:.1f}')}% · dev {_f((co.get('dev') or {}).get('pct'), '{:.2f}')}% "
-                          f"· bundler {_f((co.get('bundler') or {}).get('pct'), '{:.1f}')}% · sniper {_f((co.get('sniper') or {}).get('pct'), '{:.1f}')}% "
-                          f"· smart {_f((co.get('smart_trader') or {}).get('pct'), '{:.1f}')}%")
+            safe_lines.append(f"top10 {_f(prof.get('top10_pct'), '{:.1f}')}% \u00b7 dev {_f((co.get('dev') or {}).get('pct'), '{:.2f}')}%")
+            safe_lines.append(f"bundler {_f((co.get('bundler') or {}).get('pct'), '{:.1f}')}% \u00b7 sniper {_f((co.get('sniper') or {}).get('pct'), '{:.1f}')}% "
+                              f"\u00b7 smart {_f((co.get('smart_trader') or {}).get('pct'), '{:.1f}')}%")
         sim = (src.get("sim") or {}) if isinstance(src, dict) else {}
         if sim.get("paths"):
-            safe_line += "\nsim " + " ".join(f"{p['name']}:{'OK' if p['ok'] else 'FAIL'}"
-                                            + (f"({p['tax_pct']:.1f}%)" if p.get('tax_pct') else "") for p in sim["paths"])
-            safe_line += f" · owner {src.get('owner_state')}"
-    else:
-        safe_line = "safety -"
-    comps = " ".join(f"{c.name[:4]} {c.points:.0f}/{c.max_points:.0f}" for c in decision.components)
-    lines = [
-        f"mcap **${_f(mcap)}** · liq **${_f(liq)}** · age {_age(age)} · holders {_f(holders)}"
-        + (f" ({_pct(hg)}/5m)" if hg is not None else ""),
-        f"rVol {_f(rvol5, '{:.1f}')}x · z {_f(z, '{:.2f}')} · OFI30 {_f(w30.ofi, '{:+.2f}')} · recent {_f(feats.recent.ofi, '{:+.2f}')} "
-        f"· buyers/sellers {w30.buyers}/{w30.sellers} · new-wallet {_f((w30.new_wallet_share_usd or 0) * 100, '{:.0f}')}%",
-        f"wash {_f(wash.wash_score, '{:.2f}')}" + (f" · flags {', '.join(wash.soft_flags)}" if wash.soft_flags else "")
-        + f" · {safe_line}",
-        f"price {_price(price)} · {_pct(pc5)} {pc_label} · {_pct(feats.price_vs_anchor_pct)} from anchor · {_pct(feats.price_vs_avwap_pct)} vs aVWAP "
-        f"· anchor {_age(decision.since_anchor_s)} ago ({decision.anchor_source})",
-        f"**INVALIDATION {_price(inv)} ({_pct(inv_pct)})** · **TIME STOP {settings['time_stop_min']}m no new high**"
-        + (f" · size note ≤ ${_f(clip)} per clip (~{float(settings['size_note_liq_frac']) * 100:.0f}% of liq)" if clip else ""),
-        f"score **{decision.score:.0f}** [{comps}]",
-    ]
+            safe_lines.append("sim " + " ".join(f"{p['name']}:{'OK' if p['ok'] else 'FAIL'}"
+                                                + (f"({p['tax_pct']:.1f}%)" if p.get('tax_pct') else "") for p in sim["paths"]))
+            safe_lines.append(f"owner {src.get('owner_state')}")
+
+    # --- headline + links (description) ------------------------------------------------------------
     links = [f"[birdeye](https://birdeye.so/token/{address}?chain={chain.birdeye_chain})"]
     if chain.birdeye_chain == "solana":
         links.append(f"[dexscreener](https://dexscreener.com/solana/{address})")
     elif chain.name == "robinhood":
         links.append(f"[blockscout](https://robinhoodchain.blockscout.com/token/{address})")
-    lines.append(" · ".join(links))
-    lines.append(f"`{address}`")
-    return {"title": f"[{tier}] {chain.name.upper()} · ${sym}", "description": "\n".join(lines),
+    headline = (f"**Score {decision.score:.0f}/100** \u00b7 anchor {_age(decision.since_anchor_s)} ago ({decision.anchor_source}) "
+                f"\u00b7 safety {verdict}")
+    description = "\n".join([headline, " \u00b7 ".join(links), f"`{address}`"])
+
+    # --- fields -------------------------------------------------------------------------------------
+    market = "\n".join([f"mcap **${_f(mcap)}**", f"liq **${_f(liq)}**",
+                        f"age {_age(age)} \u00b7 holders {_f(holders)}" + (f" ({_pct(hg)}/5m)" if hg is not None else "")])
+    flow = "\n".join([f"rVol **{_f(rvol5, '{:.1f}')}x** \u00b7 z {_f(z, '{:.2f}')}",
+                      f"OFI30 **{_f(w30.ofi, '{:+.2f}')}** \u00b7 recent {_f(feats.recent.ofi, '{:+.2f}')}",
+                      f"buyers/sellers {w30.buyers}/{w30.sellers} \u00b7 new-wallet {_f((w30.new_wallet_share_usd or 0) * 100, '{:.0f}')}%"])
+    pricef = "\n".join([f"**{_price(price)}** \u00b7 {_pct(pc5)} {pc_label}",
+                        f"{_pct(feats.price_vs_anchor_pct)} from anchor",
+                        f"{_pct(feats.price_vs_avwap_pct)} vs aVWAP"])
+    washf = f"**{_f(wash.wash_score, '{:.2f}')}**" + (f"\nflags: {', '.join(wash.soft_flags)}" if wash.soft_flags else "\nno flags")
+    plan = "\n".join([f"**INVALIDATION {_price(inv)} ({_pct(inv_pct)})**",
+                      f"**TIME STOP {settings['time_stop_min']}m** no new high"]
+                     + ([f"size note \u2264 ${_f(clip)} per clip (~{float(settings['size_note_liq_frac']) * 100:.0f}% of liq)"] if clip else []))
+    score_lines = [f"{COMP_LABEL.get(c.name, c.name):<13} {_bar(c.points, c.max_points)} {c.points:>2.0f}/{c.max_points:.0f}"
+                   for c in decision.components]
+    fields = [
+        {"name": "\U0001F4CA Market", "value": market, "inline": True},
+        {"name": "\u26A1 Flow", "value": flow, "inline": True},
+        {"name": "\U0001F4C8 Price", "value": pricef, "inline": True},
+        {"name": "\U0001F9FC Wash", "value": washf, "inline": True},
+        {"name": "\U0001F6E1\uFE0F Safety", "value": "\n".join(safe_lines), "inline": True},
+        {"name": "\U0001F3AF Plan", "value": plan, "inline": False},
+        {"name": f"\U0001F9EE Score {decision.score:.0f}/100", "value": "```\n" + "\n".join(score_lines) + "\n```", "inline": False},
+    ]
+    return {"title": f"{TIER_EMOJI.get(tier, '')} {tier} \u00b7 {chain.name.upper()} \u00b7 ${sym}", "description": description,
+            "fields": fields,
             "color": TIER_COLOR.get(tier, TIER_COLOR["INFO"]), "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
-            "footer": {"text": f"{tier} · score {decision.score:.0f} · {decision.anchor_source} anchor · test channel"}}
+            "footer": {"text": f"{tier} \u00b7 score {decision.score:.0f} \u00b7 {decision.anchor_source} anchor \u00b7 test channel"}}
 
 
 def build_rug_card(check: sqlite3.Row, symbol: str | None, chain_name: str, now: int) -> dict[str, Any]:
     ago = now - int(check["alert_ts"])
-    return {"title": f"RUG WARNING · {chain_name.upper()} · ${symbol or str(check['address'])[:6]}",
-            "description": f"Alerted **{_age(ago)} ago** (re-check at +{check['minute']}m): **{check['reason']}**\n"
-                           f"{check['detail'] or ''}\n`{check['address']}`",
+    return {"title": f"\U0001F6A8 RUG WARNING \u00b7 {chain_name.upper()} \u00b7 ${symbol or str(check['address'])[:6]}",
+            "description": f"Alerted **{_age(ago)} ago** \u00b7 re-check at +{check['minute']}m\n`{check['address']}`",
+            "fields": [{"name": "Reason", "value": f"**{check['reason']}**", "inline": True},
+                       {"name": "Detail", "value": check["detail"] or "-", "inline": True}],
             "color": TIER_COLOR["RUG"], "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))}
 
 
@@ -290,7 +324,8 @@ class Alerter:
             return why
         card = build_card(chain=chain, address=address, symbol=symbol, decision=decision, feats=feats, wash=wash,
                           safety=safety, row=row, s1=s1, settings=self.s, now=now)
-        content = f"{'⬆️ UPGRADE ' if why == 'upgrade' else ''}**{decision.tier}** {chain.name} ${symbol or address[:6]} score {decision.score:.0f}"
+        up = "\u2B06\uFE0F UPGRADE " if why == "upgrade" else ""
+        content = f"{up}{TIER_EMOJI.get(decision.tier, '')} **{decision.tier}** {chain.name} ${symbol or address[:6]} \u00b7 score {decision.score:.0f}"
         msg_id = await self.webhook.send(content=content, embeds=[card])
         if msg_id is None:
             self.stats["failed"] += 1

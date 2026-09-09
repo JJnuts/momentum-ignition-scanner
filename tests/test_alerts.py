@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scanner.alerts import Alerter, AlertPolicy, DiscordWebhook, build_card, build_rug_card, _settings
+from scanner.alerts import Alerter, AlertPolicy, DiscordWebhook, build_card, build_rug_card, card_text, _settings
 from scanner.config import ChainConfig
 from scanner.db import open_db
 from scanner.features import TapeFeatures, WindowStats
@@ -131,19 +131,20 @@ def test_card_contains_every_required_field_and_invalidation_rule():
     card = build_card(chain=SOL, address=ADDR, symbol="TICK", decision=decision(), feats=feats(), wash=wash(),
                       safety=safety(), row=row(), s1={"rvol_5m": 6.1, "cohort_z": 2.3, "holder_growth_pct": 9.0},
                       settings=_settings(ACFG), now=NOW)
-    d = card["description"]
-    assert card["title"] == "[CONFIRMED] SOLANA · $TICK"
-    for token in ("mcap **$84,000**", "liq **$21,000**", "age 11m", "holders 212 (+9.0%/5m)", "rVol 6.1x", "z 2.30",
-                  "OFI30 +0.55", "buyers/sellers 18/7", "new-wallet 60%", "wash 0.12", "safety **SAFE**", "top10 18.0%",
-                  "+23.0% 5m", "+20.0% from anchor", "+9.1% vs aVWAP", "TIME STOP 15m", "size note ≤ $210", "score **88**",
-                  "[birdeye]", "[dexscreener]", f"`{ADDR}`"):
+    d = card_text(card)
+    assert card["title"].endswith("CONFIRMED · SOLANA · $TICK")
+    assert [f["name"].split(" ", 1)[1] for f in card["fields"]][:6] == ["Market", "Flow", "Price", "Wash", "Safety", "Plan"]
+    for token in ("mcap **$84,000**", "liq **$21,000**", "age 11m", "holders 212 (+9.0%/5m)", "rVol **6.1x**", "z 2.30",
+                  "OFI30 **+0.55**", "buyers/sellers 18/7", "new-wallet 60%", "Wash\n**0.12**", "Safety\n**SAFE**", "top10 18.0%",
+                  "+23.0% 5m", "+20.0% from anchor", "+9.1% vs aVWAP", "TIME STOP 15m", "size note ≤ $210", "Score 88/100",
+                  "Participation", "[birdeye]", "[dexscreener]", f"`{ADDR}`"):
         assert token in d, token
     # invalidation = nearer of anchor low / aVWAP below price: aVWAP 0.0011 -> -8.3%
     assert "INVALIDATION 0.0011 (-8.3%)" in d
     # far invalidation is capped at -25%
     card2 = build_card(chain=SOL, address=ADDR, symbol="TICK", decision=decision(), feats=feats(avwap=0.0005, anchor_low=0.0004),
                        wash=wash(), safety=safety(), row=row(), s1=None, settings=_settings(ACFG), now=NOW)
-    assert "(-25.0%)" in card2["description"]
+    assert "(-25.0%)" in card_text(card2)
     # Robinhood card: blockscout link, sim line, hourly price change label
     sr = SafetyResult("robinhood", "0xabc", NOW, "SAFE", [], 3.0, ["top10_unknown"], [],
                       {"sim": {"paths": [{"name": "sell", "ok": True, "tax_pct": 0.0}, {"name": "buy", "ok": True, "tax_pct": 2.5}]},
@@ -152,8 +153,9 @@ def test_card_contains_every_required_field_and_invalidation_rule():
                     liquidity=5000.0, market_cap=50_000.0, pc_1h=12.0)
     card3 = build_card(chain=RH, address="0xabc", symbol="RH", decision=decision(), feats=feats(price=1.0, avwap=0.95, anchor_low=0.9),
                        wash=wash(), safety=sr, row=rrow, s1={"rvol_dt": 4.5}, settings=_settings(ACFG), now=NOW)
-    assert "[blockscout]" in card3["description"] and "sim sell:OK buy:OK(2.5%)" in card3["description"]
-    assert "+12.0% 1h" in card3["description"] and "flags: top10_unknown" in card3["description"]
+    t3 = card_text(card3)
+    assert "[blockscout]" in t3 and "sim sell:OK buy:OK(2.5%)" in t3
+    assert "+12.0% 1h" in t3 and "flags: top10_unknown" in t3
 
 
 def test_rug_card():
@@ -163,7 +165,7 @@ def test_rug_card():
     conn.execute("INSERT INTO t VALUES(?, 30, 'LIQUIDITY_DROP', 'liquidity 50,000 -> 20,000 (-60%)', 'ADDR')", (NOW - 1800,))
     r = conn.execute("SELECT * FROM t").fetchone()
     c = build_rug_card(r, "TICK", "solana", NOW)
-    assert c["title"] == "RUG WARNING · SOLANA · $TICK" and "30m ago" in c["description"] and "-60%" in c["description"]
+    assert c["title"].endswith("RUG WARNING · SOLANA · $TICK") and "30m ago" in c["description"] and "-60%" in card_text(c)
 
 
 # ---- alerter end to end ----------------------------------------------------------------------------
@@ -178,13 +180,13 @@ async def test_consider_sends_persists_schedules_and_labels(tmp_path):
     assert out == "sent" and hook.sent == 1 and al.stats["sent"] == 1
     a = conn.execute("SELECT * FROM alerts").fetchone()
     assert a["tier"] == "CONFIRMED" and a["message_id"] == "msg1" and a["liquidity"] == 21_000.0 and a["channel"] == "test"
-    assert json.loads(a["card_json"])["title"].startswith("[CONFIRMED]")
+    assert "CONFIRMED" in json.loads(a["card_json"])["title"]
     assert conn.execute("SELECT alerted_ts FROM decisions WHERE id=?", (did,)).fetchone()["alerted_ts"] == NOW
     assert conn.execute("SELECT COUNT(*) FROM rug_checks WHERE alert_id=?", (a["id"],)).fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM labels WHERE ref_kind='alert' AND ref_id=?", (a["id"],)).fetchone()[0] == 4
     # posted payload has content + embed
     payload = hook._post.calls[0]
-    assert "**CONFIRMED**" in payload["content"] and payload["embeds"][0]["title"].startswith("[CONFIRMED]")
+    assert "**CONFIRMED**" in payload["content"] and "CONFIRMED" in payload["embeds"][0]["title"]
     # same token again -> cooldown, nothing posted
     d2 = decision(); did2 = persist_decision(conn, d2)
     assert await al.consider(chain=SOL, address=ADDR, symbol="TICK", decision=d2, decision_id=did2, feats=feats(),
