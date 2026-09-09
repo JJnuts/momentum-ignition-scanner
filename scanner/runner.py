@@ -17,6 +17,7 @@ from .recorder import RawRecorder
 from .labeler import Labeler
 from .stage0 import CycleResult, Stage0Scanner
 from .stage1 import Stage1
+from .candidates import CandidateManager
 from .enrichment import Enricher
 from .features import compute as compute_features
 from .tape import TapePoller, TapeStore, persist_features
@@ -67,6 +68,7 @@ class RunSummary:
     tape_cu: int = 0
     tape_skipped_budget: int = 0
     tape_errors: int = 0
+    candidate_stats: dict = field(default_factory=dict)
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -111,19 +113,13 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
             r = conn.execute("SELECT liquidity FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
                              (chain, address)).fetchone()
             return float(r["liquidity"]) if r and r["liquidity"] is not None else None
-        stay_s = int(cfg.raw.get("candidates", {}).get("max_stay_min", 8)) * 60
-        max_per_chain = int(cfg.raw.get("candidates", {}).get("max_per_chain", 12))
+        manager = CandidateManager(conn, ledger, cfg.raw.get("candidates", {}), daily_cap)
+        if manager.active_set:
+            log.info("candidates restored from DB: %d active", len(manager.active_set))
 
-        async def provisional_active() -> list[tuple[ChainConfig, str]]:
-            """Until T8: the most recent WATCH nominations per chain, within the stay window."""
-            now = int(time.time())
-            out: list[tuple[ChainConfig, str]] = []
-            for ch in cfg.enabled_chains:
-                rows = conn.execute(
-                    "SELECT address, MAX(ts) AS ts FROM nominations WHERE chain=? AND tier='WATCH' AND ts>=? "
-                    "GROUP BY address ORDER BY ts DESC LIMIT ?", (ch.name, now - stay_s, max_per_chain)).fetchall()
-                out.extend((ch, r["address"]) for r in rows)
-            return out
+        def s1_rvol_of(ev) -> float | None:
+            f = ev.features
+            return f.rvol_5m if f.mode == "short" else f.rvol_dt
 
         def account(res: CycleResult) -> None:
             st = stats[res.chain]
@@ -166,6 +162,24 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                         log.info("%s cycle %d stage1: evaluated=%d passed=%d nominated=%d cooldown=%d%s",
                                  ch.name, res.cycle_id, s1.evaluated, s1.passed, s1.nominated, s1.cooldown,
                                  (" nominees=" + ", ".join(f"{s}" for s, _ in s1.nominees)) if s1.nominees else "")
+                        # candidate lifecycle: nominations ENTER, active tokens on the page get a STAY check
+                        by_addr = {ev.row.address: ev for ev in s1.evals}
+                        outcomes: dict[str, int] = {}
+                        for nom_id, row in s1.nominated_rows:
+                            ev = by_addr.get(row.address)
+                            o = manager.on_nomination(ch, row.address, row.symbol, s1_rvol_of(ev) if ev else None,
+                                                      res.ts, anchor_ts=res.ts, anchor_price=row.price)
+                            outcomes[o] = outcomes.get(o, 0) + 1
+                        nominated_addrs = {row.address for _, row in s1.nominated_rows}
+                        for c in manager.active(ch, res.ts):
+                            ev = by_addr.get(c.address)
+                            if ev is not None and c.address not in nominated_addrs:
+                                manager.on_stage1_row(ch, c.address, s1_rvol_of(ev), res.ts)
+                        if outcomes or manager.stats.events:
+                            log.info("%s candidates: %s active=%d%s", ch.name, outcomes or "-",
+                                     len(manager.active(ch, res.ts)),
+                                     (" | " + "; ".join(manager.stats.events[-3:])) if manager.stats.events else "")
+                            manager.stats.events.clear()
                         lb = labeler.on_cycle(ch, s1, res.ts, res.cycle_id)
                         st.labels_created += lb.labels_created
                         st.controls_drawn += lb.controls_drawn
@@ -202,7 +216,11 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         async def tape_loop() -> None:
             while True:
                 try:
-                    active = await provisional_active()
+                    now_i = int(time.time())
+                    for c in manager.expire(now_i):
+                        store.drop(c.chain, c.address)
+                        log.info("candidate expired: %s %s after %d polls", c.chain, c.symbol or c.address[:8], c.polls)
+                    active = [(chain_map[c.chain], c.address) for c in manager.active(now=now_i)]
                     if active:
                         ps = await poller.poll(active)
                         tape_totals["polls"] += ps.polled
@@ -236,14 +254,19 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                             except Exception:
                                 conn.execute("ROLLBACK")
                                 raise
+                            outcome = manager.on_tape(ch, address, f.ofi30.ofi, w.hard_vetoes, eval_ts,
+                                                      anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
+                            if outcome == "vetoed":
+                                store.drop(ch.name, address)
                             log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
-                                     "vs_avwap=%s vs_anchor=%s clv=%s hl=%s | wash=%s veto=%s flag=%s",
+                                     "vs_avwap=%s vs_anchor=%s clv=%s hl=%s | wash=%s veto=%s flag=%s%s",
                                      ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
                                      f.ofi30.buyers, f.ofi30.sellers, _fmt(f.ofi30.new_wallet_share_usd),
                                      f"{f.seconds_since_anchor}s" if f.anchor_ts else "-",
                                      _fmt(f.price_vs_avwap_pct, "%"), _fmt(f.price_vs_anchor_pct, "%"),
                                      _fmt(f.clv_last), f.higher_lows_2of3, _fmt(w.wash_score),
-                                     ",".join(w.hard_vetoes) or "-", ",".join(w.soft_flags) or "-")
+                                     ",".join(w.hard_vetoes) or "-", ",".join(w.soft_flags) or "-",
+                                     " -> REMOVED" if outcome == "vetoed" else "")
                         if enricher.calls or enricher.cache_hits:
                             log.info("enrichment: calls=%d cache_hits=%d budget_skips=%d cu_today=%d/%d",
                                      enricher.calls, enricher.cache_hits, enricher.budget_skips,
@@ -284,7 +307,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          label_counts=label_counts,
                          tape_polls=tape_totals["polls"], tape_fetched=tape_totals["fetched"],
                          tape_new=tape_totals["new"], tape_cu=tape_totals["cu"],
-                         tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"])
+                         tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"],
+                         candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"})
     conn.close()
     return summary
 
@@ -309,6 +333,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
                  f"label table: {s.label_counts}")
     lines.append(f"  tape polls={s.tape_polls} fetched={s.tape_fetched} new={s.tape_new} cu={s.tape_cu} "
                  f"budget_skips={s.tape_skipped_budget} errors={s.tape_errors}")
+    if s.candidate_stats:
+        lines.append(f"  candidates: {s.candidate_stats}")
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     lines.append(f"  CU today={s.cu_today_total} cap={daily_cap}; projected Stage-0 CU/day={s.projected_cu_per_day} "
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")

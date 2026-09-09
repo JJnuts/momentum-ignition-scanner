@@ -611,3 +611,23 @@ timestamp boundaries (several trades share one second on Solana).
 - Enrichments cached 5 min per candidate in `enrichment`, budgeted (40k
   CU/day) on top of the global cap. Persisted per snapshot: wash_score,
   hard_vetoes, soft_flags, wash_json (schema v5).
+
+---------------------------------------------------------------------------
+## 19. Candidate manager (T8, 2026-09-09)
+
+`scanner/candidates.py`, persisted in `candidates` (restart resumes the set).
+- ENTER on a Stage-1 nomination; a repeat nomination refreshes (one entry).
+- STAY: evidence from either a Stage-1 page row (rVol_5m / rvol_dt >= 2.0)
+  or the tape (OFI30 >= 0.0) refreshes last_seen. A failed stay check only
+  counts; silence for max_stay_min (8) expires the candidate.
+- CAP 12 per chain: a stronger newcomer evicts the weakest (strength = Stage-1
+  rVol x (1 + OFI30), floored at 0.1x), ties -> the OLDEST goes. Weaker
+  newcomers are rejected.
+- VETO: any hard veto from Stage 2 removes the token and blocks re-entry for
+  20 min. DEGRADE: when the day's CU (by the manager's own clock) reaches
+  the cap, active() is empty -> no deep polls, Stage 0/1 keep running
+  (WATCH-only) until the day rolls over.
+- First-contact depth (T6 finding): the poller keeps paging on first
+  contact until the tape spans >= 600 s (cap 6 pages = 72 CU) so the anchor
+  has a trailing baseline; quiet tokens stop after the initial 2 pages.
+- Replaces the provisional "recent WATCH nominations" active set.

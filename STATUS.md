@@ -14,7 +14,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T5 Trade tape | DONE | 2026-09-09 | 106/106 pytest; live: sorted, unique sigs, page-overlap dups caught, incremental fetch, rows persisted; tape vs Birdeye trade-data within ~1% USD on memecoin tokens |
 | T6 Trade features | DONE | 2026-09-09 | 121/121 pytest incl. no-lookahead invariant; features computed on 8 real tapes look right; per-poll snapshots persisted (schema v4) |
 | T7 Wash + vetoes | DONE | 2026-09-09 | 136/136 pytest; planted wash tape >= 0.6, organic <= 0.3, dev-dump trips DISTRIBUTION with OFI positive; real tapes separate cleanly; live enrichments cached |
-| T8–T9b Phase 2 | todo | | |
+| T8 Candidate manager | DONE | 2026-09-09 | 144/144 pytest: 30 nominations -> cap 12 + weakest-oldest eviction, stay/expire, veto+cooldown, degrade + day rollover, restart restore, first-contact depth |
+| T9–T9b Phase 2 | todo | | |
 | T10–T12 Phase 3 | todo | | T10 = RPC-based (Birdeye security is Premium-only) |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
@@ -154,6 +155,17 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   returned kol + smart_trader buckets. Endpoint tags are dev/sniper/smart_trader/kol only.
 - Real-tape check (read-only): Percolator WASH 0.68 (roundtrip 1.00, top3 0.94, tpw 3.5, new 0.05), LAPTOP 0.61;
   organic 0.08-0.35. DISTRIBUTION_SUSPECT is common on quiet tokens -> soft by design until holdings resolve it.
+
+## T8 notes (2026-09-09)
+- `scanner/candidates.py`: CandidateManager (enter/refresh/cap+evict/stay/expire/veto+cooldown/degrade), persisted in
+  `candidates`, restored on restart (stale rows expired, veto cooldowns re-armed). Runner: nominations enter,
+  active tokens on the Stage-1 page get a stay check, tape features update strength/anchor and hard vetoes
+  remove (tape dropped from memory), expiry runs each tape loop, active set feeds the poller.
+- Tape poller: first-contact depth pages until the tape spans >= 600 s (cap 6 pages); `fetch_tape(start_offset)`.
+- Defects found and fixed during QA: (1) eviction tie-break picked the NEWEST instead of the oldest; (2) the
+  degrade check used the ledger's wall-clock "today" while the manager runs on an injectable clock -> now
+  `total_since(day_start)` by the manager's clock; (3) an older poller test now hit first-contact depth
+  (fixture spans 200 s) -> that test pins first_contact_min_span_s=0.
 
 ## Commands
     python -m pytest              # unit tests

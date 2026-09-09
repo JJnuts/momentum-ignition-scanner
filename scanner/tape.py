@@ -204,16 +204,18 @@ class FetchResult:
     cu: int = 0
     stopped: str = ""       # has_next=false | reached_known | page_cap | error | budget
     error: str | None = None
+    next_offset: int = 0
 
 
 async def fetch_tape(client: BirdeyeClient, store: TapeStore, ch: ChainConfig, address: str,
-                     max_pages: int = 1, page_size: int = 100) -> FetchResult:
+                     max_pages: int = 1, page_size: int = 100, start_offset: int = 0) -> FetchResult:
     """Pull newest trades, page by page, until: no more pages, a page contained nothing new
-    (we've reached what we already know), or max_pages. Incremental by construction."""
+    (we've reached what we already know), or max_pages. Incremental by construction.
+    start_offset lets a caller continue deeper into history (first-contact depth)."""
     res = FetchResult(chain=ch.name, address=address)
     tape = store.get(ch.name, address)
     cu_page, _ = cu_cost("txs_token_v3")
-    offset = 0
+    offset = start_offset
     for _ in range(max_pages):
         try:
             items, has_next = await client.txs_token_v3(ch.birdeye_chain, address, limit=page_size, offset=offset)
@@ -230,12 +232,13 @@ async def fetch_tape(client: BirdeyeClient, store: TapeStore, ch: ChainConfig, a
         if not items or not has_next:
             res.stopped = "has_next=false"
             break
-        if new == 0 and len(tape) > 0:
+        if new == 0 and len(tape) > 0 and start_offset == 0:
             res.stopped = "reached_known"
             break
         offset += page_size
     else:
         res.stopped = "page_cap"
+    res.next_offset = offset
     tape.polls += 1
     tape.last_fetch_ts = int(time.time())
     return res
@@ -291,6 +294,11 @@ class TapePoller:
         self.first_pages = int(settings.get("pages_on_first_fetch", 2))
         self.refresh_every = max(1, int(settings.get("refresh_every_n_polls", 3)))
         self.daily_cu_budget = int(settings.get("daily_cu_budget", 80_000))
+        # first-contact depth: keep paging on first contact until the tape spans this much history
+        # (the anchor needs a trailing baseline; hot tokens fit 200 trades in 2 minutes)
+        self.first_min_span_s = int(settings.get("first_contact_min_span_s", 600))
+        self.first_max_pages = int(settings.get("first_contact_max_pages", 6))
+        self.deep_fetches = 0
         self.cu_today = 0
         self._day = self._day_of(clock())
 
@@ -334,4 +342,22 @@ class TapePoller:
             self.cu_today += res.cu
             if res.error:
                 st.errors += 1
+                continue
+            # first-contact depth: a hot token's 2 pages may span only a minute or two -> no baseline
+            if first and res.stopped == "page_cap":
+                pages_done = res.pages
+                offset = res.next_offset
+                while (pages_done < self.first_max_pages and tape.oldest_ts is not None and tape.newest_ts is not None
+                       and tape.newest_ts - tape.oldest_ts < self.first_min_span_s and self._budget_ok(cu_page)):
+                    more = await fetch_tape(self.client, self.store, ch, address, max_pages=1, start_offset=offset)
+                    tape.polls -= 1                      # fetch_tape counts a poll; this is the same first contact
+                    pages_done += more.pages
+                    offset = more.next_offset
+                    st.fetched += more.fetched
+                    st.new += more.new
+                    st.cu += more.cu
+                    self.cu_today += more.cu
+                    self.deep_fetches += 1
+                    if more.error or more.stopped != "page_cap":
+                        break
         return st

@@ -103,11 +103,12 @@
     }
   },
   "candidates": {
+    "_comment": "T8 candidate manager (SPEC s10 hysteresis). Enter on the Stage-1 trigger; stay on weaker conditions; cap with weakest-oldest eviction; hard veto removes + cooldown; silence expires; daily cap degrades to WATCH-only.",
     "max_per_chain": 12,
-    "deep_poll_interval_s": 25,
+    "max_stay_min": 8,
     "stay_rvol_5m_min": 2.0,
-    "stay_ofi_5m_min": 0.0,
-    "max_stay_min": 8
+    "stay_ofi_min": 0.0,
+    "veto_cooldown_min": 20
   },
   "alerts": {
     "cooldown_min": 20,
@@ -141,7 +142,9 @@
     "pages_on_first_fetch": 2,
     "refresh_every_n_polls": 3,
     "ring_size": 600,
-    "daily_cu_budget": 80000
+    "daily_cu_budget": 80000,
+    "first_contact_min_span_s": 600,
+    "first_contact_max_pages": 6
   },
   "stage2": {
     "features": {

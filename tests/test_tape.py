@@ -166,7 +166,8 @@ async def test_poller_first_fetch_depth_refresh_cadence_and_budget(tmp_path):
     store = TapeStore(conn)
     pages = [[sol_item(i, 1000 - i) for i in range(100)], [sol_item(i, 1000 - i) for i in range(100, 200)]]
     client = FakeClient(pages, has_next_last=True)
-    settings = {"poll_interval_s": 60, "pages_on_first_fetch": 2, "refresh_every_n_polls": 3, "daily_cu_budget": 60}
+    settings = {"poll_interval_s": 60, "pages_on_first_fetch": 2, "refresh_every_n_polls": 3, "daily_cu_budget": 60,
+                "first_contact_min_span_s": 0}          # cadence/budget test: no first-contact depth
     poller = TapePoller(client, store, CULedger(conn), settings, daily_cu_cap=10_000, clock=lambda: 1_788_866_000.0)
     active = [(SOL, TOKEN)]
     s1 = await poller.poll(active)                      # first: 2 pages = 24 CU
@@ -196,3 +197,33 @@ async def test_poller_day_rollover_resets_budget(tmp_path):
     assert poller.cu_today == 12
     t["now"] += 86400
     assert poller._budget_ok(12) and poller.cu_today == 0
+
+
+@pytest.mark.asyncio
+async def test_first_contact_depth_pages_until_span_covers_baseline(tmp_path):
+    """A hot token: 100 trades per 60 s. Two pages span 2 min; the poller must keep paging on first
+    contact until the tape spans >= first_contact_min_span_s (600 s) or the page cap."""
+    conn = open_db(tmp_path / "t.sqlite")
+    store = TapeStore(conn)
+    t_now = 1_788_866_000
+    pages = [[sol_item(p * 100 + i, t_now - (p * 100 + i) * 0.6) for i in range(100)] for p in range(8)]
+    for pg in pages:                      # int timestamps
+        for it in pg:
+            it["block_unix_time"] = int(it["block_unix_time"])
+    client = FakeClient(pages, has_next_last=True)
+    settings = {"pages_on_first_fetch": 2, "refresh_every_n_polls": 3, "daily_cu_budget": 10_000,
+                "first_contact_min_span_s": 600, "first_contact_max_pages": 6}
+    poller = TapePoller(client, store, CULedger(conn), settings, daily_cu_cap=100_000, clock=lambda: float(t_now))
+    st = await poller.poll([(SOL, TOKEN)])
+    tape = store.get(SOL.name, TOKEN)
+    # 100 trades/min -> 600 s needs ~10 pages, capped at 6 -> 600 trades, span ~360 s
+    assert len(client.calls) == 6 and st.fetched == 600 and poller.deep_fetches == 4
+    assert tape.polls == 1                                   # still ONE first contact
+    assert [c[3] for c in client.calls] == [0, 100, 200, 300, 400, 500]
+    # a quiet token stops after the initial pages
+    conn2 = open_db(tmp_path / "q.sqlite")
+    quiet = [[sol_item(i, t_now - i * 30) for i in range(100)], [sol_item(100 + i, t_now - (100 + i) * 30) for i in range(100)]]
+    c2 = FakeClient(quiet, has_next_last=True)
+    p2 = TapePoller(c2, TapeStore(conn2), CULedger(conn2), settings, 100_000, clock=lambda: float(t_now))
+    await p2.poll([(SOL, TOKEN)])
+    assert len(c2.calls) == 2 and p2.deep_fetches == 0
