@@ -113,3 +113,9 @@ See ROADMAP.md for task definitions, SPEC.md for design.
     python -m pytest              # unit tests
     python -m scanner selftest    # offline self-check (or double-click selftest.bat)
     python -m scanner run         # main loop (from T2)
+
+## Repo + launcher (2026-09-09)
+- Private repo: https://github.com/JJnuts/momentum-ignition-scanner (first commit 96a56da). Secrets, data, raw, logs are ignored; the
+  staged diff was scanned for the key line and the webhook before the first push (0 occurrences).
+- Desktop shortcut `Momentum Sniper Bot.lnk` -> `run_console.bat`: foreground console, Ctrl+C stops; if a background
+  instance is running (data/scanner.pid alive) it offers to stop it and take over.
