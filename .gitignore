@@ -1,0 +1,10 @@
+.env
+raw/
+data/
+logs/
+__pycache__/
+.pytest_cache/
+.pytest_tmp/
+secrets.txt
+secrets.env
+env.txt
