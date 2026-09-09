@@ -176,6 +176,13 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - Config `scoring` (weights, mappings, tiers, window [30,180]); `alerts` now holds delivery policy only (T13).
 - QA: my hand-computed expectation for the partial vector was wrong (45.8 = WATCH); code was right; test fixed
   and a true IGNITION vector (65.5) added.
+- Live QA after the first T9 restart (2026-09-09): (1) the decision log line had one %s more than arguments ->
+  Python logging dropped EVERY decision line and wrote 150 "Logging error" tracebacks to stderr (368 KB);
+  the DB rows were fine. Fixed via a tested `format_decision_line` helper. (2) Timing data: Stage 1 nominates
+  a median 112 s (p75 203 s) after the tape onset and the first Stage-2 evaluation waited up to a full tape
+  tick -> the [30,180] window rejected ~half of first evaluations. Window widened to [30,360] and newly
+  entered candidates are now polled + evaluated IMMEDIATELY on nomination (eval_lock serialises this with the
+  tape tick). (3) `evaluate_candidates` extracted from the tape loop.
 
 ## Commands
     python -m pytest              # unit tests

@@ -202,7 +202,7 @@
     }
   },
   "scoring": {
-    "_comment": "T9 (SPEC s10). score = participation 30 + orderflow 25 + efficiency 15 + structure 15 + holder_growth 10 + safety 5. Vetoes always win. Eligibility window in seconds after the anchor (tape onset, else Stage-1 nomination time); widened from [30,90] to [30,180] because the tape polls every 60 s. FROZEN priors.",
+    "_comment": "T9 (SPEC s10). score = participation 30 + orderflow 25 + efficiency 15 + structure 15 + holder_growth 10 + safety 5. Vetoes always win. Eligibility window in seconds after the anchor (tape onset, else Stage-1 nomination time). Measured 2026-09-09: Stage 1 nominates a median 112 s (p75 203 s) after the tape onset and the first Stage-2 evaluation adds up to one tape-loop tick, so [30,180] rejected ~half of first evaluations -> [30,360]. Newly entered candidates are now evaluated immediately on nomination. FROZEN from Milestone B.",
     "weights": {
       "participation": 30,
       "orderflow": 25,
@@ -242,7 +242,7 @@
     "tier_confirmed_score": 75,
     "eligible_after_anchor_s": [
       30,
-      180
+      360
     ]
   }
 }

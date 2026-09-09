@@ -80,7 +80,7 @@ def test_vetoes_override_score():
     assert d.hard_vetoes == ["DISTRIBUTION"] and d.soft_flags == ["X"]
 
 
-@pytest.mark.parametrize("since, ok", [(20, False), (30, True), (90, True), (180, True), (181, False), (600, False)])
+@pytest.mark.parametrize("since, ok", [(20, False), (30, True), (90, True), (360, True), (361, False), (600, False)])
 def test_eligibility_window(since, ok):
     d = decide("solana", "A", feats(anchor_ts=NOW - since), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW)
     assert d.since_anchor_s == since and d.eligible is ok and d.alertable is ok

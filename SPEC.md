@@ -656,3 +656,8 @@ for efficiency / holder growth). T13 reads `alertable` rows.
   Holder growth was 0 for every candidate (page entrants have no prior
   snapshot) - a known weakness of that component, worth revisiting at
   Milestone C.
+- Live timing (2026-09-09, 13 candidates): Stage-1 nomination lag vs tape
+  onset min -181 / p25 51 / median 112 / p75 203 / max 696 s. With the tape
+  tick adding up to 60 s, the first Stage-2 evaluation lands a median ~3 min
+  after onset -> eligibility widened to [30, 360] s and first contact now
+  runs immediately on nomination instead of waiting for the tick.

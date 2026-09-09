@@ -77,6 +77,14 @@ def _fmt(v: float | None, suffix: str = "") -> str:
     return "-" if v is None else f"{v:.2f}{suffix}"
 
 
+def format_decision_line(d, symbol: str | None) -> str:
+    comps = " ".join(f"{c.name[:4]}={c.points:.0f}/{c.max_points:.0f}" for c in d.components)
+    since = f"{d.since_anchor_s}s" if d.since_anchor_s is not None else "-"
+    return (f"decision {d.chain} {symbol or d.address[:8]}: score={d.score:.0f} [{comps}] tier={d.tier} "
+            f"anchor={d.anchor_ts}({d.anchor_source}) since={since} eligible={d.eligible}"
+            + (" *** ALERTABLE ***" if d.alertable else ""))
+
+
 def projected_cu_per_day(cfg: Config) -> int:
     cu, _ = cu_cost("token_list_v3")
     return int(sum(cu * 86400 / ch.scan_interval_s for ch in cfg.enabled_chains))
@@ -184,6 +192,13 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                                      len(manager.active(ch, res.ts)),
                                      (" | " + "; ".join(manager.stats.events[-3:])) if manager.stats.events else "")
                             manager.stats.events.clear()
+                        # immediate first contact: don't wait for the next tape tick (saves up to poll_interval_s)
+                        fresh = [(ch, row.address) for _, row in s1.nominated_rows
+                                 if (ch.name, row.address) in manager.active_set
+                                 and manager.active_set[(ch.name, row.address)].polls == 0
+                                 and store.get(ch.name, row.address, load_from_db=False).polls == 0]
+                        if fresh and not manager.degraded(res.ts):
+                            asyncio.create_task(poll_and_evaluate(fresh, "on-nomination"))
                         lb = labeler.on_cycle(ch, s1, res.ts, res.cycle_id)
                         st.labels_created += lb.labels_created
                         st.controls_drawn += lb.controls_drawn
@@ -217,6 +232,23 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                     return
                 await asyncio.sleep(labeler.tick_interval_s)
 
+        eval_lock = asyncio.Lock()   # tape loop and immediate-on-nomination evaluations must not interleave
+
+        async def poll_and_evaluate(active: list[tuple[ChainConfig, str]], reason: str) -> None:
+            async with eval_lock:
+                ps = await poller.poll(active)
+                tape_totals["polls"] += ps.polled
+                tape_totals["fetched"] += ps.fetched
+                tape_totals["new"] += ps.new
+                tape_totals["cu"] += ps.cu
+                tape_totals["budget"] += ps.skipped_budget
+                tape_totals["errors"] += ps.errors
+                log.info("tape poll (%s): active=%d polled=%d skipped(refresh=%d, budget=%d) fetched=%d new=%d "
+                         "errors=%d cu=%d (tape cu today=%d/%d)", reason, ps.active, ps.polled, ps.skipped_refresh,
+                         ps.skipped_budget, ps.fetched, ps.new, ps.errors, ps.cu, poller.cu_today,
+                         poller.daily_cu_budget)
+                await evaluate_candidates(active)
+
         async def tape_loop() -> None:
             while True:
                 try:
@@ -226,73 +258,61 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                         log.info("candidate expired: %s %s after %d polls", c.chain, c.symbol or c.address[:8], c.polls)
                     active = [(chain_map[c.chain], c.address) for c in manager.active(now=now_i)]
                     if active:
-                        ps = await poller.poll(active)
-                        tape_totals["polls"] += ps.polled
-                        tape_totals["fetched"] += ps.fetched
-                        tape_totals["new"] += ps.new
-                        tape_totals["cu"] += ps.cu
-                        tape_totals["budget"] += ps.skipped_budget
-                        tape_totals["errors"] += ps.errors
-                        log.info("tape poll: active=%d polled=%d skipped(refresh=%d, budget=%d) fetched=%d new=%d "
-                                 "errors=%d cu=%d (tape cu today=%d/%d)", ps.active, ps.polled, ps.skipped_refresh,
-                                 ps.skipped_budget, ps.fetched, ps.new, ps.errors, ps.cu, poller.cu_today,
-                                 poller.daily_cu_budget)
-                        # Stage-2 features per active candidate (pure function of the tape; persisted per poll)
-                        feat_cfg = stage2_cfg.get("features", {})
-                        eval_ts = int(time.time())
-                        for ch, address in active:
-                            tape = store.get(ch.name, address)
-                            if len(tape) == 0:
-                                continue
-                            trades = tape.trades()
-                            f = compute_features(trades, feat_cfg)
-                            # enrichments are awaited OUTSIDE any transaction (network); cached + budgeted
-                            holdings = await enricher.holdings(ch, address)
-                            flows = await enricher.tag_flows(ch, address)
-                            w = evaluate_wash(trades, f, wash_cfg, liquidity=latest_liquidity(ch.name, address),
-                                              holdings_pct=holdings, tag_flows=flows)
-                            cand = manager.active_set.get((ch.name, address))
-                            s1_feats, s1_ts = latest_stage1_features(conn, ch.name, address)
-                            d = decide(ch.name, address, f, w, scoring_cfg, eval_ts, s1_features=s1_feats, s1_ts=s1_ts,
-                                       fallback_anchor_ts=cand.anchor_ts if cand else None)
-                            conn.execute("BEGIN")
-                            try:
-                                tf_id = persist_features(conn, ch.name, address, f, eval_ts, wash=w)
-                                persist_decision(conn, d, tape_features_id=tf_id)
-                                conn.execute("COMMIT")
-                            except Exception:
-                                conn.execute("ROLLBACK")
-                                raise
-                            decision_totals[d.tier] = decision_totals.get(d.tier, 0) + 1
-                            if d.alertable:
-                                decision_totals["alertable"] = decision_totals.get("alertable", 0) + 1
-                            outcome = manager.on_tape(ch, address, f.ofi30.ofi, w.hard_vetoes, eval_ts,
-                                                      anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
-                            if outcome == "vetoed":
-                                store.drop(ch.name, address)
-                            log.info("decision %s %s: score=%.0f [%s] tier=%s anchor=%s(%s) since=%s eligible=%s%s",
-                                     ch.name, (cand.symbol if cand and cand.symbol else address[:8]), d.score,
-                                     " ".join(f"{c.name[:4]}={c.points:.0f}/{c.max_points:.0f}" for c in d.components),
-                                     d.tier, d.anchor_source, f"{d.since_anchor_s}s" if d.since_anchor_s is not None else "-",
-                                     d.eligible, " *** ALERTABLE ***" if d.alertable else "")
-                            log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
-                                     "vs_avwap=%s vs_anchor=%s clv=%s hl=%s | wash=%s veto=%s flag=%s%s",
-                                     ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
-                                     f.ofi30.buyers, f.ofi30.sellers, _fmt(f.ofi30.new_wallet_share_usd),
-                                     f"{f.seconds_since_anchor}s" if f.anchor_ts else "-",
-                                     _fmt(f.price_vs_avwap_pct, "%"), _fmt(f.price_vs_anchor_pct, "%"),
-                                     _fmt(f.clv_last), f.higher_lows_2of3, _fmt(w.wash_score),
-                                     ",".join(w.hard_vetoes) or "-", ",".join(w.soft_flags) or "-",
-                                     " -> REMOVED" if outcome == "vetoed" else "")
-                        if enricher.calls or enricher.cache_hits:
-                            log.info("enrichment: calls=%d cache_hits=%d budget_skips=%d cu_today=%d/%d",
-                                     enricher.calls, enricher.cache_hits, enricher.budget_skips,
-                                     enricher.cu_today, enricher.daily_cu_budget)
+                        await poll_and_evaluate(active, "tick")
                 except Exception:  # noqa: BLE001
                     log.exception("tape poll crashed")
                 if once:
                     return
                 await asyncio.sleep(poller.interval_s)
+
+        async def evaluate_candidates(active: list[tuple[ChainConfig, str]]) -> None:
+            # Stage-2 features per active candidate (pure function of the tape; persisted per poll)
+            feat_cfg = stage2_cfg.get("features", {})
+            eval_ts = int(time.time())
+            for ch, address in active:
+                tape = store.get(ch.name, address)
+                if len(tape) == 0:
+                    continue
+                trades = tape.trades()
+                f = compute_features(trades, feat_cfg)
+                # enrichments are awaited OUTSIDE any transaction (network); cached + budgeted
+                holdings = await enricher.holdings(ch, address)
+                flows = await enricher.tag_flows(ch, address)
+                w = evaluate_wash(trades, f, wash_cfg, liquidity=latest_liquidity(ch.name, address),
+                                  holdings_pct=holdings, tag_flows=flows)
+                cand = manager.active_set.get((ch.name, address))
+                s1_feats, s1_ts = latest_stage1_features(conn, ch.name, address)
+                d = decide(ch.name, address, f, w, scoring_cfg, eval_ts, s1_features=s1_feats, s1_ts=s1_ts,
+                           fallback_anchor_ts=cand.anchor_ts if cand else None)
+                conn.execute("BEGIN")
+                try:
+                    tf_id = persist_features(conn, ch.name, address, f, eval_ts, wash=w)
+                    persist_decision(conn, d, tape_features_id=tf_id)
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+                decision_totals[d.tier] = decision_totals.get(d.tier, 0) + 1
+                if d.alertable:
+                    decision_totals["alertable"] = decision_totals.get("alertable", 0) + 1
+                outcome = manager.on_tape(ch, address, f.ofi30.ofi, w.hard_vetoes, eval_ts,
+                                          anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
+                if outcome == "vetoed":
+                    store.drop(ch.name, address)
+                log.info(format_decision_line(d, cand.symbol if cand else None))
+                log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
+                         "vs_avwap=%s vs_anchor=%s clv=%s hl=%s | wash=%s veto=%s flag=%s%s",
+                         ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
+                         f.ofi30.buyers, f.ofi30.sellers, _fmt(f.ofi30.new_wallet_share_usd),
+                         f"{f.seconds_since_anchor}s" if f.anchor_ts else "-",
+                         _fmt(f.price_vs_avwap_pct, "%"), _fmt(f.price_vs_anchor_pct, "%"),
+                         _fmt(f.clv_last), f.higher_lows_2of3, _fmt(w.wash_score),
+                         ",".join(w.hard_vetoes) or "-", ",".join(w.soft_flags) or "-",
+                         " -> REMOVED" if outcome == "vetoed" else "")
+            if enricher.calls or enricher.cache_hits:
+                log.info("enrichment: calls=%d cache_hits=%d budget_skips=%d cu_today=%d/%d",
+                         enricher.calls, enricher.cache_hits, enricher.budget_skips,
+                         enricher.cu_today, enricher.daily_cu_budget)
 
         tasks = [asyncio.create_task(chain_loop(ch), name=f"chain:{ch.name}") for ch in cfg.enabled_chains]
         tasks.append(asyncio.create_task(label_loop(), name="labeler"))
