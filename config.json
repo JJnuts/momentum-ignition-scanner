@@ -142,5 +142,24 @@
     "refresh_every_n_polls": 3,
     "ring_size": 600,
     "daily_cu_budget": 80000
+  },
+  "stage2": {
+    "features": {
+      "_comment": "Trade-based features (SPEC s11). Windows are trade counts with a max age; anchor = first 20-trade window whose USD rate >= mult x trailing rate (baseline excludes the window) with >= m distinct buyers, searched within lookback.",
+      "ignition_window_trades": 20,
+      "ignition_max_age_s": 90,
+      "ofi_window_trades": 30,
+      "recent_window_trades": 10,
+      "wash_window_trades": 60,
+      "window_max_age_s": 600,
+      "min_window_trades": 8,
+      "anchor_rate_mult": 4.0,
+      "anchor_min_buyers": 8,
+      "anchor_trailing_s": 1800,
+      "anchor_min_trailing_s": 120,
+      "anchor_lookback_s": 900,
+      "bar_trades": 10,
+      "max_bars": 30
+    }
   }
 }

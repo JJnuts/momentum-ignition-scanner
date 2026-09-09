@@ -17,7 +17,8 @@ from .recorder import RawRecorder
 from .labeler import Labeler
 from .stage0 import CycleResult, Stage0Scanner
 from .stage1 import Stage1
-from .tape import TapePoller, TapeStore
+from .features import compute as compute_features
+from .tape import TapePoller, TapeStore, persist_features
 
 log = logging.getLogger("runner")
 
@@ -64,6 +65,10 @@ class RunSummary:
     tape_cu: int = 0
     tape_skipped_budget: int = 0
     tape_errors: int = 0
+
+
+def _fmt(v: float | None, suffix: str = "") -> str:
+    return "-" if v is None else f"{v:.2f}{suffix}"
 
 
 def projected_cu_per_day(cfg: Config) -> int:
@@ -200,6 +205,28 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                                  "errors=%d cu=%d (tape cu today=%d/%d)", ps.active, ps.polled, ps.skipped_refresh,
                                  ps.skipped_budget, ps.fetched, ps.new, ps.errors, ps.cu, poller.cu_today,
                                  poller.daily_cu_budget)
+                        # Stage-2 features per active candidate (pure function of the tape; persisted per poll)
+                        feat_cfg = cfg.raw.get("stage2", {}).get("features", {})
+                        eval_ts = int(time.time())
+                        conn.execute("BEGIN")
+                        try:
+                            for ch, address in active:
+                                tape = store.get(ch.name, address)
+                                if len(tape) == 0:
+                                    continue
+                                f = compute_features(tape.trades(), feat_cfg)
+                                persist_features(conn, ch.name, address, f, eval_ts)
+                                log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
+                                         "vs_avwap=%s vs_anchor=%s clv=%s hl=%s",
+                                         ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
+                                         f.ofi30.buyers, f.ofi30.sellers, _fmt(f.ofi30.new_wallet_share_usd),
+                                         f"{f.seconds_since_anchor}s" if f.anchor_ts else "-",
+                                         _fmt(f.price_vs_avwap_pct, "%"), _fmt(f.price_vs_anchor_pct, "%"),
+                                         _fmt(f.clv_last), f.higher_lows_2of3)
+                            conn.execute("COMMIT")
+                        except Exception:
+                            conn.execute("ROLLBACK")
+                            raise
                 except Exception:  # noqa: BLE001
                     log.exception("tape poll crashed")
                 if once:

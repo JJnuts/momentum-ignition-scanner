@@ -12,7 +12,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T4 Labeler v1 | DONE | 2026-09-08 | 94/94 pytest; live: runner enqueued a nomination + a control, label loop ticked; real OHLCV path fill on AMC parsed correctly |
 | Milestone A | RUNNING | started 2026-09-09 | Starter key; detached via start_scanner.bat / PowerShell Start-Process; stop with stop_scanner.bat; WATCH-only, thresholds frozen |
 | T5 Trade tape | DONE | 2026-09-09 | 106/106 pytest; live: sorted, unique sigs, page-overlap dups caught, incremental fetch, rows persisted; tape vs Birdeye trade-data within ~1% USD on memecoin tokens |
-| T6–T9b Phase 2 | todo | | |
+| T6 Trade features | DONE | 2026-09-09 | 121/121 pytest incl. no-lookahead invariant; features computed on 8 real tapes look right; per-poll snapshots persisted (schema v4) |
+| T7–T9b Phase 2 | todo | | |
 | T10–T12 Phase 3 | todo | | T10 = RPC-based (Birdeye security is Premium-only) |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
@@ -125,6 +126,22 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - OPS: the Milestone A process was found dead at 15:49 (no traceback, no summary, pid file left) -> external
   kill, most likely the minimized console closed. Relaunched HIDDEN with T5 code (start_scanner.bat now uses
   PowerShell Start-Process -WindowStyle Hidden). ~17 min gap in Milestone A data.
+
+## T6 notes (2026-09-09)
+- `scanner/features.py`: window stats (OFI USD-weighted, buy share, buyers/sellers, new-wallet share), anchor
+  detection (rate ratio vs trailing baseline excluding the window, distinct-buyer floor, lookback), structure
+  (exact aVWAP, 10-trade bars, CLV, higher lows, rejection wick, price vs anchor/aVWAP). `stage2.features` config.
+- Runner: after each tape poll, features for every active candidate are computed and persisted to `tape_features`
+  (migration v4) and logged one line per candidate.
+- Tests: OFI extremes/alternating/USD-weighting, window count+age+min_n, new-wallet share, planted burst -> anchor
+  inside the burst and absent on the quiet prefix, single-wallet spike never anchors, no trailing history -> no
+  anchor, onset stable as trades arrive, bars/CLV/higher-lows/rejection on constructed paths, exact aVWAP,
+  partial-bar rule, no-lookahead at timestamp boundaries, same-second inclusion, empty/unpriced tapes.
+- QA finding: my first no-lookahead test cut the tape mid-second; several trades share a second on Solana, so
+  the invariant holds at timestamp boundaries (test fixed, extra test added).
+- Real-tape check (read-only): LUCKY99 anchor 589 s ago x5.2, OFI +0.43, +6.3% vs aVWAP, higher lows;
+  SNP500 OFI -0.67 (sellers); UBER rejection wick 0.89. Hot tokens whose tape spans 2 min have no anchor
+  (no trailing history) -> T8 first-contact depth.
 
 ## Commands
     python -m pytest              # unit tests

@@ -244,6 +244,21 @@ async def fetch_tape(client: BirdeyeClient, store: TapeStore, ch: ChainConfig, a
 ActiveFn = Callable[[], Awaitable[list[tuple[ChainConfig, str]]]]
 
 
+def persist_features(conn: sqlite3.Connection, chain: str, address: str, feats: Any, eval_ts: int) -> int:
+    """Store a TapeFeatures snapshot (scanner.features.TapeFeatures) for later scoring/tuning/replay."""
+    import json as _json
+    d = feats.to_dict()
+    cur = conn.execute(
+        "INSERT INTO tape_features(chain, address, as_of, eval_ts, n_trades, ofi30, ofi_recent, buyers30, sellers30, "
+        "new_wallet_share, anchor_ts, since_anchor_s, price_vs_avwap_pct, price_vs_anchor_pct, features_json) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (chain, address, int(feats.as_of or eval_ts), eval_ts, feats.n, feats.ofi30.ofi, feats.recent.ofi,
+         feats.ofi30.buyers, feats.ofi30.sellers, feats.ofi30.new_wallet_share_usd, feats.anchor_ts,
+         feats.seconds_since_anchor, feats.price_vs_avwap_pct, feats.price_vs_anchor_pct,
+         _json.dumps(d, separators=(",", ":"), default=str)))
+    return int(cur.lastrowid)
+
+
 @dataclass
 class PollStats:
     polled: int = 0

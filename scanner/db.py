@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA: list[str] = [
     # key/value state (schema version, cursors, daily budget counters)
@@ -165,11 +165,32 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE labels ADD COLUMN source TEXT",                                   # scan_row|multi_price|ohlcv
         "CREATE INDEX IF NOT EXISTS ix_labels_path ON labels(path_status, due_ts)",
     ],
+    4: [  # T6: per-poll Stage-2 feature snapshots (inputs for scoring, tune.py and the replay backtester)
+        """CREATE TABLE IF NOT EXISTS tape_features(
+            id            INTEGER PRIMARY KEY,
+            chain         TEXT    NOT NULL,
+            address       TEXT    NOT NULL,
+            as_of         INTEGER NOT NULL,      -- tape's newest trade ts at evaluation
+            eval_ts       INTEGER NOT NULL,      -- wall clock of the evaluation
+            n_trades      INTEGER,
+            ofi30         REAL,
+            ofi_recent    REAL,
+            buyers30      INTEGER,
+            sellers30     INTEGER,
+            new_wallet_share REAL,
+            anchor_ts     INTEGER,
+            since_anchor_s INTEGER,
+            price_vs_avwap_pct REAL,
+            price_vs_anchor_pct REAL,
+            features_json TEXT    NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_tape_features_chain_addr_ts ON tape_features(chain, address, as_of)",
+    ],
 }
 
 EXPECTED_TABLES = {
     "meta", "scan_rows", "nominations", "candidates", "trades",
-    "alerts", "labels", "safety", "cu_ledger",
+    "alerts", "labels", "safety", "cu_ledger", "tape_features",
 }
 
 

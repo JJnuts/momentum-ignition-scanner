@@ -553,3 +553,31 @@ Two passes, chosen for cost:
   quiet tokens, ~2 s on hot ones. Stage 2 evaluates hot candidates, so the
   practical lag is seconds; T6 should still timestamp features by the tape's
   newest trade, not wall clock.
+
+---------------------------------------------------------------------------
+## 17. Trade-based features (T6, 2026-09-09)
+
+Implemented in `scanner/features.py` as pure functions of trades with
+ts <= as_of (as_of = tape's newest trade, never wall clock). Invariant tested:
+computing on a prefix == computing on the full tape as of that time, at
+timestamp boundaries (several trades share one second on Solana).
+- Windows are trade counts with a max age: ignition 20 (<=90 s), OFI 30,
+  recent 10, wash 60 (<=600 s), min 8 trades else undefined. OFI is USD-
+  weighted taker imbalance (9 dust buys + 1 big sell -> negative), plus buy
+  share, unique buyers/sellers, buyer:seller ratio, new-wallet share (buy USD
+  from wallets NOT seen earlier in the tape), trades per wallet, USD rate.
+- Anchor (ignition onset): earliest i within a 900 s lookback whose 20-trade
+  window USD rate >= 4x the trailing-30-min rate (baseline EXCLUDES the
+  window, needs >= 120 s of history) with >= 8 distinct buyers. A single
+  wallet spraying volume never anchors. Onset is stable as more trades arrive.
+- Structure since the onset window: exact anchored VWAP (sum usd / sum
+  amount), 10-trade bars, CLV, higher lows 2-of-3, rejection = upper wick
+  fraction of the highest-USD bar, price vs anchor / vs aVWAP, max since
+  anchor. Partial last bar kept only if >= half a bar.
+- Persisted per poll to `tape_features` (schema v4) with a features_json
+  blob: inputs for T9 scoring, T14 tune.py and T15 replay.
+- On real tapes: tokens whose 200-trade tape spans ~2 min have NO trailing
+  history -> anchor undefined. T8 must fetch deeper on first contact for hot
+  tokens (or fall back to the Stage-1 ignition time as the anchor).
+  new_wallet_share = 0 on such tapes flags wallet churn (bot-like), a useful
+  wash input for T7.
