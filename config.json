@@ -160,6 +160,47 @@
       "anchor_lookback_s": 900,
       "bar_trades": 10,
       "max_bars": 30
+    },
+    "wash": {
+      "_comment": "Wash/bot composite + vetoes (SPEC s5B, s10). Components normalised lo->hi to 0..1 then weighted. Vetoes always win.",
+      "window_trades": 60,
+      "min_trades": 12,
+      "weights": {
+        "roundtrip": 0.35,
+        "top3": 0.25,
+        "uniform": 0.15,
+        "count_trap": 0.15,
+        "churn": 0.1
+      },
+      "roundtrip_lo": 0.1,
+      "roundtrip_hi": 0.5,
+      "top3_lo": 0.3,
+      "top3_hi": 0.8,
+      "uniform_lo": 0.55,
+      "uniform_hi": 0.9,
+      "churn_tpw_lo": 1.5,
+      "churn_tpw_hi": 4.0,
+      "count_trap_ratio_band": [
+        0.9,
+        1.1
+      ],
+      "count_trap_turnover_min": 1.5,
+      "wash_veto_score": 0.6,
+      "seller_top3_share_min": 0.6,
+      "seller_supply_pct_min": 3.0,
+      "seller_share_suspect_min": 0.85,
+      "rejection_wick_max": 0.6,
+      "dev_insider_sell_share_max": 0.2,
+      "bundler_sell_share_max": 0.4
+    },
+    "enrichment": {
+      "_comment": "Optional per-candidate Birdeye enrichments (Starter). holdings: top_traders 25 CU once per candidate (5-min cache) for the DISTRIBUTION veto. tag_flows: wallet-tags-tracker 30 CU, Solana only, once per candidate.",
+      "holdings_enabled": true,
+      "holdings_cache_s": 300,
+      "tag_flows_enabled": true,
+      "tag_flows_cache_s": 300,
+      "tag_flows_lookback_s": 1800,
+      "daily_cu_budget": 40000
     }
   }
 }

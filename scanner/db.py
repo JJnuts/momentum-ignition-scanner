@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA: list[str] = [
     # key/value state (schema version, cursors, daily budget counters)
@@ -185,6 +185,20 @@ MIGRATIONS: dict[int, list[str]] = {
             features_json TEXT    NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS ix_tape_features_chain_addr_ts ON tape_features(chain, address, as_of)",
+    ],
+    5: [  # T7: wash score + vetoes per snapshot; enrichment cache
+        "ALTER TABLE tape_features ADD COLUMN wash_score REAL",
+        "ALTER TABLE tape_features ADD COLUMN hard_vetoes TEXT",     # comma-separated names
+        "ALTER TABLE tape_features ADD COLUMN soft_flags TEXT",
+        "ALTER TABLE tape_features ADD COLUMN wash_json TEXT",
+        """CREATE TABLE IF NOT EXISTS enrichment(
+            chain      TEXT NOT NULL,
+            address    TEXT NOT NULL,
+            kind       TEXT NOT NULL,          -- holdings | tag_flows
+            fetched_ts INTEGER NOT NULL,
+            payload    TEXT NOT NULL,
+            PRIMARY KEY(chain, address, kind)
+        )""",
     ],
 }
 

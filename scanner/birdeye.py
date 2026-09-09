@@ -285,10 +285,12 @@ class BirdeyeClient:
         data = await self._request("token_holder_profile", chain, {"token_address": address})
         return dict(data or {})
 
-    async def wallet_tags_tracker(self, chain: str, address: str, time_from: int,
+    async def wallet_tags_tracker(self, chain: str, address: str, time_from: int, time_to: int | None = None,
+                                  time_frame: str = "5m", tags: list[str] | None = None,
                                   top_10_holder: bool | None = None) -> dict:
         data = await self._request("wallet_tags_tracker", chain,
-                                   {"token_address": address, "time_from": time_from, "top_10_holder": top_10_holder})
+                                   {"token_address": address, "time_from": time_from, "time_to": time_to,
+                                    "time_frame": time_frame, "tags": tags, "top_10_holder": top_10_holder})
         return dict(data or {})
 
     async def token_first_buyers(self, chain: str, address: str, offset: int = 0, limit: int = 70) -> list[dict]:

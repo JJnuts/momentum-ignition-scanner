@@ -244,18 +244,26 @@ async def fetch_tape(client: BirdeyeClient, store: TapeStore, ch: ChainConfig, a
 ActiveFn = Callable[[], Awaitable[list[tuple[ChainConfig, str]]]]
 
 
-def persist_features(conn: sqlite3.Connection, chain: str, address: str, feats: Any, eval_ts: int) -> int:
-    """Store a TapeFeatures snapshot (scanner.features.TapeFeatures) for later scoring/tuning/replay."""
+def persist_features(conn: sqlite3.Connection, chain: str, address: str, feats: Any, eval_ts: int,
+                     wash: Any | None = None) -> int:
+    """Store a TapeFeatures snapshot (+ optional WashReport) for later scoring/tuning/replay."""
     import json as _json
     d = feats.to_dict()
+    wash_score = hard = soft = wash_json = None
+    if wash is not None:
+        wash_score = wash.wash_score
+        hard = ",".join(wash.hard_vetoes) or None
+        soft = ",".join(wash.soft_flags) or None
+        wash_json = _json.dumps(wash.to_dict(), separators=(",", ":"), default=str)
     cur = conn.execute(
         "INSERT INTO tape_features(chain, address, as_of, eval_ts, n_trades, ofi30, ofi_recent, buyers30, sellers30, "
-        "new_wallet_share, anchor_ts, since_anchor_s, price_vs_avwap_pct, price_vs_anchor_pct, features_json) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "new_wallet_share, anchor_ts, since_anchor_s, price_vs_avwap_pct, price_vs_anchor_pct, features_json, "
+        "wash_score, hard_vetoes, soft_flags, wash_json) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (chain, address, int(feats.as_of or eval_ts), eval_ts, feats.n, feats.ofi30.ofi, feats.recent.ofi,
          feats.ofi30.buyers, feats.ofi30.sellers, feats.ofi30.new_wallet_share_usd, feats.anchor_ts,
          feats.seconds_since_anchor, feats.price_vs_avwap_pct, feats.price_vs_anchor_pct,
-         _json.dumps(d, separators=(",", ":"), default=str)))
+         _json.dumps(d, separators=(",", ":"), default=str), wash_score, hard, soft, wash_json))
     return int(cur.lastrowid)
 
 

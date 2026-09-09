@@ -13,7 +13,8 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | Milestone A | RUNNING | started 2026-09-09 | Starter key; detached via start_scanner.bat / PowerShell Start-Process; stop with stop_scanner.bat; WATCH-only, thresholds frozen |
 | T5 Trade tape | DONE | 2026-09-09 | 106/106 pytest; live: sorted, unique sigs, page-overlap dups caught, incremental fetch, rows persisted; tape vs Birdeye trade-data within ~1% USD on memecoin tokens |
 | T6 Trade features | DONE | 2026-09-09 | 121/121 pytest incl. no-lookahead invariant; features computed on 8 real tapes look right; per-poll snapshots persisted (schema v4) |
-| T7–T9b Phase 2 | todo | | |
+| T7 Wash + vetoes | DONE | 2026-09-09 | 136/136 pytest; planted wash tape >= 0.6, organic <= 0.3, dev-dump trips DISTRIBUTION with OFI positive; real tapes separate cleanly; live enrichments cached |
+| T8–T9b Phase 2 | todo | | |
 | T10–T12 Phase 3 | todo | | T10 = RPC-based (Birdeye security is Premium-only) |
 | T13 Discord | todo | | |
 | Milestone B | todo | | |
@@ -142,6 +143,17 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - Real-tape check (read-only): LUCKY99 anchor 589 s ago x5.2, OFI +0.43, +6.3% vs aVWAP, higher lows;
   SNP500 OFI -0.67 (sellers); UBER rejection wick 0.89. Hot tokens whose tape spans 2 min have no anchor
   (no trailing history) -> T8 first-contact depth.
+
+## T7 notes (2026-09-09)
+- `scanner/wash.py`: components (roundtrip, top3, uniformity, count trap, churn) -> wash_score; vetoes WASH,
+  DISTRIBUTION (hard with holdings, soft suspect without), REJECTION, DEV_INSIDER_SELLING, BUNDLER_SELLING.
+  `scanner/enrichment.py`: holdings via top_traders (25 CU) + tag flows via wallet-tags-tracker (30 CU, Solana),
+  cached 5 min in `enrichment`, budgeted 40k CU/day. Runner evaluates wash per candidate per poll and persists
+  wash_score / hard_vetoes / soft_flags / wash_json (schema v5).
+- Live probes: tags tracker returns EMPTY groups with the default 1D frame; with time_frame=5m + explicit tags it
+  returned kol + smart_trader buckets. Endpoint tags are dev/sniper/smart_trader/kol only.
+- Real-tape check (read-only): Percolator WASH 0.68 (roundtrip 1.00, top3 0.94, tpw 3.5, new 0.05), LAPTOP 0.61;
+  organic 0.08-0.35. DISTRIBUTION_SUSPECT is common on quiet tokens -> soft by design until holdings resolve it.
 
 ## Commands
     python -m pytest              # unit tests

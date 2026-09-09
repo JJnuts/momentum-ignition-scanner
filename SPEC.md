@@ -581,3 +581,33 @@ timestamp boundaries (several trades share one second on Solana).
   tokens (or fall back to the Stage-1 ignition time as the anchor).
   new_wallet_share = 0 on such tapes flags wallet churn (bot-like), a useful
   wash input for T7.
+
+---------------------------------------------------------------------------
+## 18. Wash score and vetoes (T7, 2026-09-09)
+
+`scanner/wash.py` (pure) + `scanner/enrichment.py` (cached Birdeye lookups).
+- Composite wash_score over the last 60 trades: roundtrip share (wallets that
+  both bought and sold) 0.35, top-3 wallet share 0.25, size uniformity
+  (median/mean) 0.15, count trap (buy:sell count ~1 with turnover >= 1.5x
+  liquidity) 0.15, churn (trades per wallet, low new-wallet share) 0.10; each
+  normalised lo->hi to 0..1. WASH veto at >= 0.60. On real tapes: a textbook
+  wash (Percolator: roundtrip 100%, top-3 94%, 3.5 trades/wallet, 5% new)
+  scored 0.68; organic tokens 0.08-0.35. Size uniformity is tiny on Solana
+  memecoins (heavy right tail), so that component rarely fires.
+- DISTRIBUTION veto: top-3 sellers >= 60% of sell USD AND one holds >= 3% of
+  supply (holdings from token_top_traders holdVolume / supply, supply =
+  market_cap/price from the scan row). Holdings unknown -> soft
+  DISTRIBUTION_SUSPECT only when share >= 85% (common on quiet tokens with
+  few sellers, hence soft).
+- REJECTION veto: upper wick > 60% of range on the highest-USD bar since anchor.
+- Tag-flow vetoes from Birdeye wallet-tags-tracker (Solana, 30 CU, 5-min
+  buckets, tags dev/sniper/smart_trader/kol ONLY - bundler/insider are not
+  offered by this endpoint and will come from holder-profile in T10):
+  DEV_INSIDER_SELLING (>= 20% of window sell USD), BUNDLER_SELLING (>= 40%).
+  smart_trader net flow is kept as a score input for T9. Probe on a busy
+  token returned kol + smart_trader buckets with buy/sell USD and wallet
+  counts; the default 1D time_frame returns empty groups - always pass
+  time_frame=5m and explicit tags.
+- Enrichments cached 5 min per candidate in `enrichment`, budgeted (40k
+  CU/day) on top of the global cap. Persisted per snapshot: wash_score,
+  hard_vetoes, soft_flags, wash_json (schema v5).

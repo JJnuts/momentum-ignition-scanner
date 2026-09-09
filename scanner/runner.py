@@ -17,8 +17,10 @@ from .recorder import RawRecorder
 from .labeler import Labeler
 from .stage0 import CycleResult, Stage0Scanner
 from .stage1 import Stage1
+from .enrichment import Enricher
 from .features import compute as compute_features
 from .tape import TapePoller, TapeStore, persist_features
+from .wash import evaluate as evaluate_wash
 
 log = logging.getLogger("runner")
 
@@ -101,6 +103,14 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         store = TapeStore(conn, ring_size=int(tape_cfg.get("ring_size", 600)))
         poller = TapePoller(client, store, ledger, tape_cfg, daily_cap)
         tape_totals = {"polls": 0, "fetched": 0, "new": 0, "cu": 0, "budget": 0, "errors": 0}
+        stage2_cfg = cfg.raw.get("stage2", {})
+        enricher = Enricher(conn, client, ledger, stage2_cfg.get("enrichment", {}), daily_cap)
+        wash_cfg = stage2_cfg.get("wash", {})
+
+        def latest_liquidity(chain: str, address: str) -> float | None:
+            r = conn.execute("SELECT liquidity FROM scan_rows WHERE chain=? AND address=? ORDER BY ts DESC LIMIT 1",
+                             (chain, address)).fetchone()
+            return float(r["liquidity"]) if r and r["liquidity"] is not None else None
         stay_s = int(cfg.raw.get("candidates", {}).get("max_stay_min", 8)) * 60
         max_per_chain = int(cfg.raw.get("candidates", {}).get("max_per_chain", 12))
 
@@ -206,27 +216,38 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                                  ps.skipped_budget, ps.fetched, ps.new, ps.errors, ps.cu, poller.cu_today,
                                  poller.daily_cu_budget)
                         # Stage-2 features per active candidate (pure function of the tape; persisted per poll)
-                        feat_cfg = cfg.raw.get("stage2", {}).get("features", {})
+                        feat_cfg = stage2_cfg.get("features", {})
                         eval_ts = int(time.time())
-                        conn.execute("BEGIN")
-                        try:
-                            for ch, address in active:
-                                tape = store.get(ch.name, address)
-                                if len(tape) == 0:
-                                    continue
-                                f = compute_features(tape.trades(), feat_cfg)
-                                persist_features(conn, ch.name, address, f, eval_ts)
-                                log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
-                                         "vs_avwap=%s vs_anchor=%s clv=%s hl=%s",
-                                         ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
-                                         f.ofi30.buyers, f.ofi30.sellers, _fmt(f.ofi30.new_wallet_share_usd),
-                                         f"{f.seconds_since_anchor}s" if f.anchor_ts else "-",
-                                         _fmt(f.price_vs_avwap_pct, "%"), _fmt(f.price_vs_anchor_pct, "%"),
-                                         _fmt(f.clv_last), f.higher_lows_2of3)
-                            conn.execute("COMMIT")
-                        except Exception:
-                            conn.execute("ROLLBACK")
-                            raise
+                        for ch, address in active:
+                            tape = store.get(ch.name, address)
+                            if len(tape) == 0:
+                                continue
+                            trades = tape.trades()
+                            f = compute_features(trades, feat_cfg)
+                            # enrichments are awaited OUTSIDE any transaction (network); cached + budgeted
+                            holdings = await enricher.holdings(ch, address)
+                            flows = await enricher.tag_flows(ch, address)
+                            w = evaluate_wash(trades, f, wash_cfg, liquidity=latest_liquidity(ch.name, address),
+                                              holdings_pct=holdings, tag_flows=flows)
+                            conn.execute("BEGIN")
+                            try:
+                                persist_features(conn, ch.name, address, f, eval_ts, wash=w)
+                                conn.execute("COMMIT")
+                            except Exception:
+                                conn.execute("ROLLBACK")
+                                raise
+                            log.info("features %s %s: n=%d ofi30=%s recent=%s buyers=%d/%d new=%s anchor=%s "
+                                     "vs_avwap=%s vs_anchor=%s clv=%s hl=%s | wash=%s veto=%s flag=%s",
+                                     ch.name, address[:8], f.n, _fmt(f.ofi30.ofi), _fmt(f.recent.ofi),
+                                     f.ofi30.buyers, f.ofi30.sellers, _fmt(f.ofi30.new_wallet_share_usd),
+                                     f"{f.seconds_since_anchor}s" if f.anchor_ts else "-",
+                                     _fmt(f.price_vs_avwap_pct, "%"), _fmt(f.price_vs_anchor_pct, "%"),
+                                     _fmt(f.clv_last), f.higher_lows_2of3, _fmt(w.wash_score),
+                                     ",".join(w.hard_vetoes) or "-", ",".join(w.soft_flags) or "-")
+                        if enricher.calls or enricher.cache_hits:
+                            log.info("enrichment: calls=%d cache_hits=%d budget_skips=%d cu_today=%d/%d",
+                                     enricher.calls, enricher.cache_hits, enricher.budget_skips,
+                                     enricher.cu_today, enricher.daily_cu_budget)
                 except Exception:  # noqa: BLE001
                     log.exception("tape poll crashed")
                 if once:
