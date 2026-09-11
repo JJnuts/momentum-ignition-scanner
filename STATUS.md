@@ -24,6 +24,10 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | Milestone B | RUNNING | started 2026-09-09 | pings ON to the TEST channel; thresholds FROZEN until n >= 100 IGNITION+CONFIRMED alerts per chain |
 | T14 tune.py | DONE | 2026-09-09 | 210/210 pytest: synthetic planted signal ranks top, noise ranks last, expectancy exact on planted outcomes, report renders with/without data; real report: nominations 1.73x control, eff_5m top feature |
 | T15 Replay backtester | DONE | 2026-09-09 | 220/220 pytest: synthetic tape reproduces live decision, planted backfill + config change reproduced via knowledge time / config version, exact-path rules on planted candles; real: 2344 decisions 94.7% match (legacy), gaps = backfill + eligibility config drift, fixed by schema v8 |
+| T15a Budget audit + local-day reset | todo | | |
+| T15b Burn-rate governor | todo | | |
+| T15c Cheapest-spend trims | todo | | |
+| T15d Live verification (no dark hours) | todo | | |
 
 ## T0 notes (2026-09-08)
 - Layout: `scanner/` package (`config`, `plans`, `db`, `recorder`, `logging_setup`, `__main__`),

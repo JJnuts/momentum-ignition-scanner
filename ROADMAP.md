@@ -179,6 +179,37 @@ IGNITION+CONFIRMED alerts per chain.** No tuning inside the window.
   - Accept: 24 h replay reproduces 100 % of live tiers/timestamps; runtime
     reported.
 
+**PHASE 5b — CU budget governor (found 2026-09-11: daily cap hit ~16:00 local,
+bot dark ~10 h/day through the US session; full-day need ~300-340k CU vs 267k
+allowed on Starter). Signal thresholds stay FROZEN throughout.**
+
+**T15a Budget audit + local-day reset** [S]
+  - `python -m scanner budget`: CU by endpoint and by hour for the last N days,
+    projected full-day need, hours dark per day. Ledger "today" and the daily
+    cap reset move from UTC midnight to the configured local timezone.
+  - Accept: report matches the ledger by hand; unit test that the day boundary
+    follows the configured tz; no behaviour change to the scan.
+
+**T15b Burn-rate governor** [M]
+  - Pace spend to (budget remaining / hours remaining in the day): a single
+    `pace` factor in [0.5, 1] read by the Stage-0 interval, tape refresh
+    cadence and enrichment cache TTL. Below pace 0.5 the existing degrade path
+    applies. Governor state logged every cycle and on the heartbeat.
+  - Accept: simulated day at 1.5x the budget ends within the cap with no
+    dark hours; a quiet day keeps pace 1.0; thresholds untouched (config hash
+    of the scoring/stage1 sections unchanged).
+
+**T15c Cheapest-spend trims** [S]
+  - Solana Stage-0 interval 60 s -> 90 s; enrichment cache TTL longer;
+    top_traders only for candidates that reached the scoring stage.
+  - Accept: projected full-day need from T15a drops ~20 %; Stage-1 rVol
+    baseline math verified unchanged at the new interval (tests).
+
+**T15d Live verification** [S]
+  - After the user relaunches: 24 h with zero dark hours, CU within the cap,
+    alerts present in every local hour. Findings into SPEC s27.
+  - Accept: budget report shows 0 dark hours; heartbeat CU < cap at 23:00.
+
 **MILESTONE C — first tuning pass from T14 → refreeze → second window.**
 
 ---------------------------------------------------------------------------
