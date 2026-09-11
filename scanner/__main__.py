@@ -87,10 +87,9 @@ def cmd_selftest(config_path: Path, env_path: Path) -> int:
         rec = RawRecorder(cfg.raw_dir, enabled=cfg.recorder_enabled)
         if cfg.recorder_enabled:
             path = rec.record("selftest", {"k": "v"}, 200, {"ok": True}, chain=None, latency_ms=0)
-            last = None
-            for last in rec.iter_file(path):
-                pass
-            if not last or last.get("endpoint") != "selftest":
+            # look for OUR record, not the last one: a live scanner may append to the same file meanwhile
+            found = any(r.get("endpoint") == "selftest" for r in rec.iter_file(path))
+            if not found:
                 _fail("recorder: round-trip mismatch")
                 return 5
             _ok(f"recorder -> {path.name} (round-trip verified)")
@@ -299,6 +298,7 @@ def cmd_budget(config_path: Path, env_path: Path, since_days: float | None, out:
     from .budget import build, format_report
     from .db import open_db
     from .plans import daily_cu_budget
+    from .schedule import Schedule
 
     try:
         cfg = load_config(config_path, env_path)
@@ -308,9 +308,10 @@ def cmd_budget(config_path: Path, env_path: Path, since_days: float | None, out:
     dayclock.configure(cfg.timezone)
     daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
     conn = open_db(cfg.db_path)
-    rep = build(conn, daily_cap=daily_cap, days=int(since_days or 3))
+    sched = Schedule(cfg.raw.get("schedule"))
+    rep = build(conn, daily_cap=daily_cap, days=int(since_days or 3), quiet_hours=sched.quiet_hours())
     conn.close()
-    text = format_report(rep)
+    text = format_report(rep) + f"\n\nschedule: {sched.describe()}"
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")

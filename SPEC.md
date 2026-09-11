@@ -855,3 +855,26 @@ Consequences for the plan:
 Labeled win rate by local hour (2,043 nominations, win = +30 % within 60 m):
 00-08 36 %, 09-15 28 %, 15-24 33 % (evening thin because of the blackout).
 The quiet block is the weakest window but not dead.
+
+---------------------------------------------------------------------------
+## 28. Active window (T15b, 2026-09-11)
+
+User decision: the bot scans when the market is worth scanning and rests
+when it is not, instead of pacing spend. Quiet block 09:00-15:00
+Europe/Sofia (labeled win rate 28 % vs 36 % in 00:00-08:00; the user's read
+is that big launches cluster 00:00-08:00 local). config.schedule:
+enabled, quiet_local {start, end}, mode off|slow, slow_interval_s.
+
+What stops in the block: Stage-0 list scans (and therefore new nominations,
+new candidates, new tape polls, new alerts). What keeps running: the labeler
+(+5/15/30/60 labels of everything nominated or alerted before the block),
+the rug watch (+10/30/60 re-checks), tape polls of candidates still inside
+their 8-minute stay, the daily heartbeat. Manual stop/start was rejected for
+exactly this reason: it would discard the labels and rug checks of the last
+hour before the stop.
+
+Budget effect (report `budget_t15b.md`): at the observed pace the block
+saves ~113k CU/day (452k -> 340k). Still ~100k over the 240k cap, so T15c
+(trims) is required, not optional. The user cannot take the Premium plan
+now. Manual override: `schedule.enabled: false` scans 24 h; `mode: slow`
+keeps one scan per slow_interval_s inside the block.

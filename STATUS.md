@@ -25,7 +25,7 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T14 tune.py | DONE | 2026-09-09 | 210/210 pytest: synthetic planted signal ranks top, noise ranks last, expectancy exact on planted outcomes, report renders with/without data; real report: nominations 1.73x control, eff_5m top feature |
 | T15 Replay backtester | DONE | 2026-09-09 | 220/220 pytest: synthetic tape reproduces live decision, planted backfill + config change reproduced via knowledge time / config version, exact-path rules on planted candles; real: 2344 decisions 94.7% match (legacy), gaps = backfill + eligibility config drift, fixed by schema v8 |
 | T15a Budget audit + local-day reset | DONE | 2026-09-11 | 224/224 pytest: day boundary follows config.timezone (Sofia vs UTC), ledger today_total local, report dark hours/cap-hit/projection exact on planted ledger; real report matches hand tally (10 dark h 17:00-03:00) |
-| T15b Active window (quiet block 09-15 local) | todo | | |
+| T15b Active window (quiet block 09-15 local) | DONE | 2026-09-11 | 228/228 pytest: boundaries follow config.timezone, off/slow/disabled intervals, overnight wrap, next_transition, budget report quiet saving; config diff = schedule block only (thresholds untouched); live projection: saves 113k/day, still 100k over -> T15c |
 | T15c Cheapest-spend trims | todo (only if needed after T15d) | | |
 | T15d Live verification (no dark hours) | todo | | |
 
@@ -256,6 +256,19 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - Known race (not T15a): `selftest` recorder round-trip reads the LAST record of today's raw file; when the live
   scanner appends concurrently it can fail once. Re-run passes. Fix = look for the selftest record, not the last.
 - Live scanner still on pre-T15a code; relaunch planned after T15b/T15c.
+
+## T15b notes (2026-09-11)
+- `scanner/schedule.py`: Schedule(config.schedule) -> in_quiet / state / scan_interval (None = skip, slow = max(base,
+  slow_interval_s)) / next_transition / quiet_hours / active_fraction / describe. Window in local time via
+  scanner.clock; start > end wraps midnight.
+- Runner: ONLY chain_loop (Stage 0) consults it: inside the quiet block (mode off) it logs the transition once,
+  counts quiet_skips and sleeps to the boundary in <=60 s steps. label_loop, tape_loop (active candidates expire on
+  their own), rug watch and heartbeat are untouched, so labels/rug checks of pre-window alerts complete.
+  `run --once` ignores the schedule. Heartbeat line carries schedule=state; summary carries the description.
+- Budget report: quiet-block CU and "projected with quiet" per day + saving line. Live: 452k -> 340k/day.
+- Acceptance "alert at 08:59 still gets +60 labels / rug checks" is structural (those loops never see the schedule);
+  confirmed live in T15d.
+- Live scanner still on pre-T15a/b code; single relaunch after T15c.
 
 ## Commands
     python -m pytest              # unit tests

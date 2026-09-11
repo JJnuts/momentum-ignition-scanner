@@ -55,6 +55,12 @@ def local_hour(ts: float) -> int:
     return datetime.fromtimestamp(ts, _TZ).hour
 
 
+def local_minutes(ts: float) -> int:
+    """Minutes since local midnight (0..1439)."""
+    dt = datetime.fromtimestamp(ts, _TZ)
+    return dt.hour * 60 + dt.minute
+
+
 def local_date(ts: float) -> str:
     return datetime.fromtimestamp(ts, _TZ).strftime("%Y-%m-%d")
 

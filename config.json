@@ -122,6 +122,13 @@
     "size_note_liq_frac": 0.01,
     "username": "Momentum Ignition Scanner"
   },
+  "schedule": {
+    "_comment": "T15b active window (user decision 2026-09-11). Stage 0 does not scan inside the quiet block (local time, config.timezone); labeler, rug watch, tape of active candidates and heartbeat keep running. mode off | slow (slow = one scan per slow_interval_s).",
+    "enabled": true,
+    "quiet_local": {"start": "09:00", "end": "15:00"},
+    "mode": "off",
+    "slow_interval_s": 300
+  },
   "labeler": {
     "_comment": "close pass: scan_rows (free) -> multi_price (Lite+). path pass: one OHLCV 1m call at the final horizon per NOMINATION (45 CU) fills MFE/MAE for all horizons. Controls get close-based labels only.",
     "horizons_min": [

@@ -23,6 +23,7 @@ from .enrichment import Enricher
 from .features import compute as compute_features
 from .alerts import Alerter, DiscordWebhook
 from .rugwatch import RugWatch
+from .schedule import Schedule
 from .safety import SafetyChecker
 from .scoring import decide, latest_stage1_features, persist_decision
 from .tape import TapePoller, TapeStore, persist_features
@@ -51,6 +52,7 @@ class ChainStats:
     s1_nominees: list = field(default_factory=list)
     labels_created: int = 0
     controls_drawn: int = 0
+    quiet_skips: int = 0        # Stage-0 cycles not run because of the quiet window (T15b)
 
 
 @dataclass
@@ -78,6 +80,7 @@ class RunSummary:
     safety_totals: dict = field(default_factory=dict)
     rug_totals: dict = field(default_factory=dict)
     alert_stats: dict = field(default_factory=dict)
+    schedule: str = ""
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -93,8 +96,10 @@ def format_decision_line(d, symbol: str | None) -> str:
 
 
 def projected_cu_per_day(cfg: Config) -> int:
+    """Stage-0 list calls only, scaled by the schedule's active fraction (T15b)."""
     cu, _ = cu_cost("token_list_v3")
-    return int(sum(cu * 86400 / ch.scan_interval_s for ch in cfg.enabled_chains))
+    frac = Schedule(cfg.raw.get("schedule")).active_fraction()
+    return int(sum(cu * 86400 * frac / ch.scan_interval_s for ch in cfg.enabled_chains))
 
 
 async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = False) -> RunSummary:
@@ -108,6 +113,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
     stats: dict[str, ChainStats] = {ch.name: ChainStats() for ch in cfg.enabled_chains}
     cfg_hash = register_config(conn, cfg.raw, int(started))
     log.info("config version %s registered", cfg_hash)
+    schedule = Schedule(cfg.raw.get("schedule"))
+    log.info("schedule: %s (now: %s)", schedule.describe(), schedule.state(started))
 
     log.info("run start: plan=%s daily_cu_cap=%d cu_today=%d (day tz %s) projected_cu/day=%d chains=%s",
              cfg.birdeye_plan, daily_cap, ledger.today_total(), dayclock.tz_name(), projected_cu_per_day(cfg),
@@ -185,8 +192,23 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                      f" ERROR({res.error})" if res.error else "")
 
         async def chain_loop(ch: ChainConfig) -> None:
+            last_state = schedule.state(time.time())
             while True:
                 t0 = time.monotonic()
+                now_s = time.time()
+                state = schedule.state(now_s)
+                if state != last_state:
+                    log.info("%s schedule: %s -> %s (next change %s local)", ch.name, last_state, state,
+                             dayclock.local_hms(schedule.next_transition(now_s)))
+                    last_state = state
+                interval = schedule.scan_interval(now_s, ch.scan_interval_s)
+                if interval is None and not once:
+                    # quiet window, mode off: no Stage-0 scan. Labeler / rug watch / tape of still-active
+                    # candidates keep running in their own loops. Sleep to the boundary (checked every 60 s).
+                    stats[ch.name].quiet_skips += 1
+                    await asyncio.sleep(min(60.0, max(1.0, schedule.next_transition(now_s) - now_s)))
+                    continue
+                interval = ch.scan_interval_s if interval is None else interval
                 try:
                     res = await scanner.cycle(ch)
                     account(res)
@@ -240,7 +262,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                     stats[ch.name].errors += 1
                 if once:
                     return
-                await asyncio.sleep(max(0.0, ch.scan_interval_s - (time.monotonic() - t0)))
+                await asyncio.sleep(max(0.0, interval - (time.monotonic() - t0)))
 
         async def label_loop() -> None:
             while True:
@@ -276,7 +298,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                         f"cycles sol={stats['solana'].cycles if 'solana' in stats else 0} "
                         f"rh={stats['robinhood'].cycles if 'robinhood' in stats else 0} · nominations="
                         f"{sum(s.s1_nominated for s in stats.values())} · alerts={alerter.stats['sent']} · "
-                        f"CU today={ledger.today_total():,}/{daily_cap:,}"))
+                        f"CU today={ledger.today_total():,}/{daily_cap:,} · schedule={schedule.state(time.time())}"))
                 except Exception:  # noqa: BLE001
                     log.exception("alert delivery crashed")
                 if once:
@@ -415,7 +437,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          tape_skipped_budget=tape_totals["budget"], tape_errors=tape_totals["errors"],
                          candidate_stats={k: v for k, v in vars(manager.stats).items() if k != "events"},
                          decision_totals=dict(decision_totals), safety_totals=dict(safety_totals),
-                         rug_totals=dict(rug_totals), alert_stats=dict(alerter.stats))
+                         rug_totals=dict(rug_totals), alert_stats=dict(alerter.stats),
+                         schedule=schedule.describe())
     conn.close()
     return summary
 
@@ -435,7 +458,8 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
                      f"first-fail={dict(top_fails)}")
         if st.s1_nominees:
             lines.append(f"             nominees: {', '.join(sym for sym, _ in st.s1_nominees[:12])}")
-        lines.append(f"             labeler: rows created={st.labels_created} controls drawn={st.controls_drawn}")
+        lines.append(f"             labeler: rows created={st.labels_created} controls drawn={st.controls_drawn}"
+                     + (f" quiet-window skips={st.quiet_skips}" if st.quiet_skips else ""))
     lines.append(f"  labeler ticks={s.label_ticks} done={s.labels_done} failed={s.labels_failed} paths={s.paths_done}; "
                  f"label table: {s.label_counts}")
     lines.append(f"  tape polls={s.tape_polls} fetched={s.tape_fetched} new={s.tape_new} cu={s.tape_cu} "
@@ -455,4 +479,6 @@ def format_summary(s: RunSummary, cfg: Config) -> str:
                  f"({'within' if s.projected_cu_per_day <= daily_cap else 'EXCEEDS'} cap)")
     if s.rh_rows_total is not None:
         lines.append(f"  robinhood rows with vol_5m present: {s.rh_rows_with_5m}/{s.rh_rows_total}")
+    if s.schedule:
+        lines.append(f"  schedule: {s.schedule}")
     return "\n".join(lines)

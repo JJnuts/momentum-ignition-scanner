@@ -28,6 +28,8 @@ class DayBudget:
     observed_hours: int = 0     # hours inside [first ledger row ever, now]
     active_hours: int = 0
     dark_hours: int = 0
+    quiet_cu: int = 0           # CU spent inside the configured quiet block (T15b)
+    quiet_hours_n: int = 0
 
     @property
     def cu_per_active_hour(self) -> float:
@@ -36,6 +38,13 @@ class DayBudget:
     @property
     def projected_24h(self) -> int:
         return int(round(self.cu_per_active_hour * 24))
+
+    @property
+    def projected_with_quiet(self) -> int:
+        """projected_24h minus what the quiet block would have saved at the same pace."""
+        if not self.active_hours or not self.quiet_hours_n:
+            return self.projected_24h
+        return int(round(self.cu_per_active_hour * (24 - self.quiet_hours_n)))
 
 
 @dataclass
@@ -51,7 +60,8 @@ class BudgetReport:
         return sum(d.dark_hours for d in self.days)
 
 
-def build(conn: sqlite3.Connection, daily_cap: int, days: int = 3, now: int | None = None) -> BudgetReport:
+def build(conn: sqlite3.Connection, daily_cap: int, days: int = 3, now: int | None = None,
+          quiet_hours: set[int] | None = None) -> BudgetReport:
     now = int(time.time()) if now is None else int(now)
     days = max(1, int(days))
     first_row = conn.execute("SELECT MIN(ts) FROM cu_ledger").fetchone()[0]
@@ -68,14 +78,17 @@ def build(conn: sqlite3.Connection, daily_cap: int, days: int = 3, now: int | No
         end = min(clock.next_day_start(start), now)
         if end <= start:
             continue
-        db = DayBudget(date=clock.local_date(start), start_ts=start, end_ts=end)
+        db = DayBudget(date=clock.local_date(start), start_ts=start, end_ts=end, quiet_hours_n=len(quiet_hours or ()))
         rows = conn.execute("SELECT ts, cu FROM cu_ledger WHERE ts >= ? AND ts < ? ORDER BY ts", (start, end)).fetchall()
         running = 0
         for ts, cu in rows:
             ts, cu = int(ts), int(cu)
             db.cu += cu
             db.calls += 1
-            db.by_hour[clock.local_hour(ts)] += cu
+            hh = clock.local_hour(ts)
+            db.by_hour[hh] += cu
+            if quiet_hours and hh in quiet_hours:
+                db.quiet_cu += cu
             running += cu
             if db.cap_hit_ts is None and daily_cap > 0 and running >= daily_cap:
                 db.cap_hit_ts = ts
@@ -105,21 +118,27 @@ def format_report(r: BudgetReport) -> str:
     L.append(f"# budget report (tz {r.tz}, daily cap {r.daily_cap:,} CU, as of {clock.local_date(r.now)} {clock.local_hms(r.now)})")
     L.append("")
     L.append("## per local day")
-    L.append("| day | CU | calls | cap hit at | active h | dark h | CU / active h | projected 24h | verdict |")
-    L.append("|---|---|---|---|---|---|---|---|---|")
+    L.append("| day | CU | calls | cap hit at | active h | dark h | CU / active h | projected 24h | quiet-block CU | projected with quiet | verdict |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for d in r.days:
         hit = clock.local_hms(d.cap_hit_ts) if d.cap_hit_ts else "-"
         verdict = "OVER cap" if d.projected_24h > r.daily_cap else "within cap"
         if d.dark_hours:
             verdict += f", {d.dark_hours} dark h"
         L.append(f"| {d.date} | {d.cu:,} | {d.calls:,} | {hit} | {d.active_hours}/{d.observed_hours} | {d.dark_hours} "
-                 f"| {d.cu_per_active_hour:,.0f} | {d.projected_24h:,} | {verdict} |")
-    if r.days:
-        avg = sum(d.projected_24h for d in r.days) / len(r.days)
+                 f"| {d.cu_per_active_hour:,.0f} | {d.projected_24h:,} | {d.quiet_cu:,} | {d.projected_with_quiet:,} | {verdict} |")
+    active_days = [d for d in r.days if d.active_hours]
+    if active_days:
+        avg = sum(d.projected_24h for d in active_days) / len(active_days)
         L.append("")
-        L.append(f"projected full-day need (mean of days): {avg:,.0f} CU vs cap {r.daily_cap:,} "
+        L.append(f"projected full-day need (mean of {len(active_days)} active days): {avg:,.0f} CU vs cap {r.daily_cap:,} "
                  f"({'OVER by ' + format(avg - r.daily_cap, ',.0f') if avg > r.daily_cap else 'within'}); "
                  f"dark hours total: {r.dark_hours_total}")
+        if any(d.quiet_hours_n for d in active_days):
+            saving = sum(d.projected_24h - d.projected_with_quiet for d in active_days) / len(active_days)
+            with_q = sum(d.projected_with_quiet for d in active_days) / len(active_days)
+            L.append(f"quiet block saves {saving:,.0f} CU/day at the same pace -> projected {with_q:,.0f} "
+                     f"({'still OVER by ' + format(with_q - r.daily_cap, ',.0f') if with_q > r.daily_cap else 'within cap'})")
     L.append("")
     L.append("## CU by local hour")
     L.append("| hour | " + " | ".join(d.date for d in r.days) + " |")
