@@ -190,16 +190,20 @@ allowed on Starter). Signal thresholds stay FROZEN throughout.**
   - Accept: report matches the ledger by hand; unit test that the day boundary
     follows the configured tz; no behaviour change to the scan.
 
-**T15b Burn-rate governor** [M]
-  - Pace spend to (budget remaining / hours remaining in the day): a single
-    `pace` factor in [0.5, 1] read by the Stage-0 interval, tape refresh
-    cadence and enrichment cache TTL. Below pace 0.5 the existing degrade path
-    applies. Governor state logged every cycle and on the heartbeat.
-  - Accept: simulated day at 1.5x the budget ends within the cap with no
-    dark hours; a quiet day keeps pace 1.0; thresholds untouched (config hash
-    of the scoring/stage1 sections unchanged).
+**T15b Active window (replaces the burn-rate governor; user decision
+2026-09-11: 09:00-15:00 local is the quiet block, labeled win rate 28 % vs
+36 % in 00:00-08:00)** [M]
+  - config `schedule.quiet_local` {start, end, mode off|slow}. Stage 0 honours
+    it (off: no scans; slow: one scan per N minutes). Labeler, rug watch,
+    enrichment of already-alerted tokens and the heartbeat keep running so
+    every label and rug check completes. Transitions logged; state on the
+    heartbeat line.
+  - Accept: boundary follows config.timezone; a token alerted at 08:59 still
+    gets its +60 labels and +10/+30/+60 rug checks; scoring/stage1 config
+    hash unchanged; projected full-day need (T15a) drops by the quiet-block
+    share.
 
-**T15c Cheapest-spend trims** [S]
+**T15c Cheapest-spend trims (only if T15d still shows the cap being hit)** [S]
   - Solana Stage-0 interval 60 s -> 90 s; enrichment cache TTL longer;
     top_traders only for candidates that reached the scoring stage.
   - Accept: projected full-day need from T15a drops ~20 %; Stage-1 rVol

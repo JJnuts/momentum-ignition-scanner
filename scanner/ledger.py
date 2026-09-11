@@ -5,6 +5,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from .clock import day_start
 
 
 @dataclass
@@ -41,8 +42,7 @@ class CULedger:
         return int(row[0])
 
     def today_total(self) -> int:
-        day_start = int(time.time()) - (int(time.time()) % 86400)
-        return self.total_since(day_start)
+        return self.total_since(day_start(time.time()))   # local day (scanner.clock), T15a
 
     def calls_since(self, ts: float) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM cu_ledger WHERE ts >= ?", (int(ts),)).fetchone()

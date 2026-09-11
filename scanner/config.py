@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .plans import PLANS
 
@@ -112,6 +113,7 @@ class Config:
     chains: dict[str, ChainConfig]
     env: dict[str, str | None]
     raw: dict[str, Any]
+    timezone: str = "UTC"           # IANA name; every daily budget rolls at local midnight (T15a)
 
     @property
     def enabled_chains(self) -> list[ChainConfig]:
@@ -164,6 +166,11 @@ def load_config(config_path: Path = CONFIG_PATH, env_path: Path = ENV_PATH) -> C
         raise ConfigError("config.json: no chain is enabled")
 
     root = config_path.resolve().parent
+    tz = str(data.get("timezone", "UTC") or "UTC")
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError) as e:
+        raise ConfigError(f"config.json: timezone {tz!r} is not a known IANA timezone") from e
 
     def _path(value: str) -> Path:
         p = Path(value)
@@ -186,6 +193,7 @@ def load_config(config_path: Path = CONFIG_PATH, env_path: Path = ENV_PATH) -> C
         chains=chains,
         env=env,
         raw=data,
+        timezone=tz,
     )
 
 

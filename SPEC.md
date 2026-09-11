@@ -819,3 +819,39 @@ win 41%; peak median +10% at 8 min. Consistent with the T14 coarse read
 (positive mean, thin median, bimodal peak timing). Rule B underperforms rule
 A on exact paths because the trail is hit by the intrabar noise the coarse
 read could not see. Milestone C input, not a sizing input.
+
+---------------------------------------------------------------------------
+## 27. CU budget audit (T15a, 2026-09-11) - the daily-cap blackout
+
+Found from the heartbeat ("CU today 240,000/240,000" at 18:12): the daily
+cap was a UTC day, so in Europe/Sofia it reset at 03:00 and once spent
+(mid-afternoon) the scanner went dark through the whole US session.
+`python -m scanner budget`, 3 local days:
+
+| day | CU | cap hit | active h | dark h | CU/active h | projected 24h |
+|---|---|---|---|---|---|---|
+| 09-09 | 197k | - | 9/24 | 15 (not running before 15:xx) | 21.9k | 526k |
+| 09-10 | 283k | 13:29 local-day basis | 17/24 | 7 | 16.6k | 399k |
+| 09-11 | 198k (to 13:00) | - | 11/14 | 3 | 18.0k | 432k |
+
+Full-day need at the current cadence is ~400-450k CU/day against a 240k
+cap (267k/day is the plan's monthly average). That is not a 20% overrun,
+it is ~1.7-1.9x. Prime hours (03:00-08:00 local = US evening) burn 20-30k/h;
+the 09:00-15:00 quiet block burns ~13k/h.
+
+Consequences for the plan:
+- Fix 1 (this task): every daily budget now rolls at LOCAL midnight, so an
+  overrun lands in the user's night, not the US afternoon.
+- Fix 2 (T15b active window, user decision): no Stage-0 scans 09:00-15:00
+  local. Saves ~80k/day. Alone it does NOT close the gap (~320-370k left).
+- Fix 3 (T15c trims, now REQUIRED, not optional): target -40 to -45 %:
+  Solana list interval 60 -> 120 s (list is 23 %), top_traders only at the
+  scoring stage (15 %), labeler OHLCV path fills only for nominations that
+  reached a candidate slot or a sampled control (ohlcv is 15 %), tape refresh
+  cadence by candidate rank (txs 25 %).
+- Alternative the user can choose instead of Fix 3: the Premium plan
+  (20M CU/month = 600k/day) removes the constraint entirely.
+
+Labeled win rate by local hour (2,043 nominations, win = +30 % within 60 m):
+00-08 36 %, 09-15 28 %, 15-24 33 % (evening thin because of the blackout).
+The quiet block is the weakest window but not dead.

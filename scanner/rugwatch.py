@@ -20,6 +20,7 @@ from typing import Any, Callable
 from .birdeye import BirdeyeClient, BirdeyeError, EndpointUnavailable
 from .config import ChainConfig
 from .ledger import CULedger
+from .clock import day_key
 from .plans import cu_cost, endpoint_available
 
 log = logging.getLogger("rugwatch")
@@ -52,7 +53,7 @@ class RugWatch:
         self.grace_s = int(settings.get("grace_s", 900))
         self.daily_cu_budget = int(settings.get("daily_cu_budget", 20_000))
         self.cu_today = 0
-        self._day = int(clock() // 86400)
+        self._day = day_key(clock())
 
     # ---- scheduling -------------------------------------------------------------------------
     def schedule(self, alert_id: int, chain: str, address: str, alert_ts: int, liquidity: float | None,
@@ -67,12 +68,12 @@ class RugWatch:
 
     # ---- sources --------------------------------------------------------------------------------
     def _budget_ok(self, cu: int) -> bool:
-        d = int(self._clock() // 86400)
+        d = day_key(self._clock())
         if d != self._day:
             self._day, self.cu_today = d, 0
         if self.cu_today + cu > self.daily_cu_budget:
             return False
-        if self.ledger is not None and self.ledger.total_since(d * 86400) + cu > self.daily_cu_cap:
+        if self.ledger is not None and self.ledger.total_since(d) + cu > self.daily_cu_cap:
             return False
         return True
 

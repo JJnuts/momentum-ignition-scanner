@@ -1,5 +1,7 @@
 {
   "_comment": "All tunables live here. Secrets live in .env only. Thresholds are SPEC v0.2 priors and stay FROZEN inside a tuning window.",
+  "timezone": "Europe/Sofia",
+  "_timezone_comment": "IANA tz. Every daily CU budget (cap + sub-budgets) rolls at local midnight (T15a); was UTC midnight = 03:00 Sofia.",
   "birdeye": {
     "plan": "starter",
     "base_url": "https://public-api.birdeye.so",

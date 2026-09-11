@@ -27,6 +27,7 @@ from .birdeye import BirdeyeClient, BirdeyeError, EndpointUnavailable
 from .config import ChainConfig
 from .ledger import CULedger
 from .plans import cu_cost
+from .clock import day_key
 
 log = logging.getLogger("safety")
 
@@ -203,7 +204,7 @@ class SafetyChecker:
         self._clock = clock
         self._session = session
         self.cu_today = 0
-        self._day = int(clock() // 86400)
+        self._day = day_key(clock())
         self.calls = 0
         self.cache_hits = 0
         self.rpc_errors = 0
@@ -240,12 +241,12 @@ class SafetyChecker:
             self._session = None
 
     def _budget_ok(self, cu: int) -> bool:
-        d = int(self._clock() // 86400)
+        d = day_key(self._clock())
         if d != self._day:
             self._day, self.cu_today = d, 0
         if self.cu_today + cu > int(self.s["daily_cu_budget"]):
             return False
-        if self.ledger is not None and self.ledger.total_since(d * 86400) + cu > self.daily_cu_cap:
+        if self.ledger is not None and self.ledger.total_since(d) + cu > self.daily_cu_cap:
             return False
         return True
 

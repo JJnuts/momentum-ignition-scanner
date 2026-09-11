@@ -24,6 +24,7 @@ from .birdeye import BirdeyeClient, BirdeyeError
 from .config import ChainConfig
 from .ledger import CULedger
 from .plans import cu_cost
+from .clock import day_key
 
 log = logging.getLogger("tape")
 
@@ -305,7 +306,7 @@ class TapePoller:
 
     @staticmethod
     def _day_of(ts: float) -> int:
-        return int(ts // 86400)
+        return day_key(ts)          # local day (T15a)
 
     def _roll_day(self) -> None:
         d = self._day_of(self._clock())

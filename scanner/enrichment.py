@@ -19,6 +19,7 @@ from .birdeye import BirdeyeClient, BirdeyeError, EndpointUnavailable
 from .config import ChainConfig
 from .ledger import CULedger
 from .plans import cu_cost
+from .clock import day_key
 from .wash import holdings_from_top_traders, parse_tag_flows
 
 log = logging.getLogger("enrich")
@@ -39,13 +40,13 @@ class Enricher:
         self.tag_flows_lookback_s = int(settings.get("tag_flows_lookback_s", 1800))
         self.daily_cu_budget = int(settings.get("daily_cu_budget", 40_000))
         self.cu_today = 0
-        self._day = int(clock() // 86400)
+        self._day = day_key(clock())
         self.calls = 0
         self.cache_hits = 0
         self.budget_skips = 0
 
     def _budget_ok(self, cu: int) -> bool:
-        d = int(self._clock() // 86400)
+        d = day_key(self._clock())
         if d != self._day:
             self._day, self.cu_today = d, 0
         if self.cu_today + cu > self.daily_cu_budget:

@@ -24,9 +24,9 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | Milestone B | RUNNING | started 2026-09-09 | pings ON to the TEST channel; thresholds FROZEN until n >= 100 IGNITION+CONFIRMED alerts per chain |
 | T14 tune.py | DONE | 2026-09-09 | 210/210 pytest: synthetic planted signal ranks top, noise ranks last, expectancy exact on planted outcomes, report renders with/without data; real report: nominations 1.73x control, eff_5m top feature |
 | T15 Replay backtester | DONE | 2026-09-09 | 220/220 pytest: synthetic tape reproduces live decision, planted backfill + config change reproduced via knowledge time / config version, exact-path rules on planted candles; real: 2344 decisions 94.7% match (legacy), gaps = backfill + eligibility config drift, fixed by schema v8 |
-| T15a Budget audit + local-day reset | todo | | |
-| T15b Burn-rate governor | todo | | |
-| T15c Cheapest-spend trims | todo | | |
+| T15a Budget audit + local-day reset | DONE | 2026-09-11 | 224/224 pytest: day boundary follows config.timezone (Sofia vs UTC), ledger today_total local, report dark hours/cap-hit/projection exact on planted ledger; real report matches hand tally (10 dark h 17:00-03:00) |
+| T15b Active window (quiet block 09-15 local) | todo | | |
+| T15c Cheapest-spend trims | todo (only if needed after T15d) | | |
 | T15d Live verification (no dark hours) | todo | | |
 
 ## T0 notes (2026-09-08)
@@ -245,10 +245,23 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   decision's own config version. Report separates the exactly reproducible subset from legacy rows.
 - Live scanner is still on pre-v8 code (user-run launcher). Restart needed before the exact subset fills.
 
+## T15a notes (2026-09-11)
+- `scanner/clock.py`: ONE local-day definition (configure/day_start/next_day_start/day_key/local_hour). Ledger
+  today_total, tape/enrichment/safety/rug-watch sub-budgets and the candidate degrade all roll at local midnight in
+  `config.timezone` (Europe/Sofia). Unconfigured = UTC (old behaviour, tests).
+- `scanner/budget.py` + CLI `budget [--since-days N] [--out]`: per local day CU/calls/cap-hit time/active vs dark
+  hours/CU per active hour/projected 24h; CU by local hour; CU by endpoint.
+- Real report (SPEC s27): projected full-day need 400-525k CU vs 240k cap; 25 dark hours in 3 days. Biggest
+  endpoints: txs 25%, list 23%, top_traders 15%, ohlcv (labeler paths) 15%, tags 10%, holder profile 8%.
+- Known race (not T15a): `selftest` recorder round-trip reads the LAST record of today's raw file; when the live
+  scanner appends concurrently it can fail once. Re-run passes. Fix = look for the selftest record, not the last.
+- Live scanner still on pre-T15a code; relaunch planned after T15b/T15c.
+
 ## Commands
     python -m pytest              # unit tests
     python -m scanner selftest    # offline self-check (or double-click selftest.bat)
     python -m scanner run         # main loop (from T2)
+    python -m scanner budget      # CU by local day/hour/endpoint, dark hours (T15a)
 
 ## Repo + launcher (2026-09-09)
 - Private repo: https://github.com/JJnuts/momentum-ignition-scanner (first commit 96a56da). Secrets, data, raw, logs are ignored; the

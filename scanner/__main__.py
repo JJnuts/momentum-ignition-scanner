@@ -294,6 +294,31 @@ def cmd_backtest(config_path: Path, env_path: Path, since_days: float | None, li
     return 0 if rep.n == 0 or rep.decision_match_rate >= 0.99 else 1
 
 
+def cmd_budget(config_path: Path, env_path: Path, since_days: float | None, out: Path | None) -> int:
+    from . import clock as dayclock
+    from .budget import build, format_report
+    from .db import open_db
+    from .plans import daily_cu_budget
+
+    try:
+        cfg = load_config(config_path, env_path)
+    except ConfigError as e:
+        print(f"config error: {e}")
+        return 2
+    dayclock.configure(cfg.timezone)
+    daily_cap = int(cfg.raw.get("birdeye", {}).get("daily_cu_cap") or daily_cu_budget(cfg.birdeye_plan))
+    conn = open_db(cfg.db_path)
+    rep = build(conn, daily_cap=daily_cap, days=int(since_days or 3))
+    conn.close()
+    text = format_report(rep)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"report written: {out}")
+    print(text)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -301,9 +326,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001
             pass
     parser = argparse.ArgumentParser(prog="scanner", description="Momentum Ignition Scanner")
-    parser.add_argument("command", choices=["selftest", "smoke", "run", "replay", "tape-check", "tune", "backtest"])
+    parser.add_argument("command", choices=["selftest", "smoke", "run", "replay", "tape-check", "tune", "backtest", "budget"])
     parser.add_argument("--limit", type=int, default=None, help="backtest: only the last N decisions")
-    parser.add_argument("--since-days", type=float, default=None, help="tune: only events from the last N days")
+    parser.add_argument("--since-days", type=float, default=None, help="tune/backtest: only events from the last N days; budget: local days to show (default 3)")
     parser.add_argument("--out", type=Path, default=None, help="tune: also write the markdown report here")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--env", type=Path, default=ENV_PATH)
@@ -325,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_tune(args.config, args.env, args.since_days, args.out)
     if args.command == "backtest":
         return cmd_backtest(args.config, args.env, args.since_days, args.limit, args.out)
+    if args.command == "budget":
+        return cmd_budget(args.config, args.env, args.since_days, args.out)
     return cmd_run(args.config, args.env, args.duration, args.once)
 
 

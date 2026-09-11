@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .clock import day_key
 from .config import ChainConfig
 from .ledger import CULedger
 
@@ -206,10 +207,10 @@ class CandidateManager:
     # ---- budget degrade ------------------------------------------------------------------
     def degraded(self, now: int | None = None) -> bool:
         now = int(self._clock()) if now is None else now
-        day = now // 86400
+        day = day_key(now)            # local day (T15a)
         if self.degraded_day == day:
             return True
-        if self.ledger is not None and self.ledger.total_since(day * 86400) >= self.daily_cu_cap:   # 'today' by OUR clock
+        if self.ledger is not None and self.ledger.total_since(day) >= self.daily_cu_cap:   # 'today' by OUR clock
             self.degraded_day = day
             log.warning("DAILY CU CAP REACHED (%d) - degrading to WATCH-only (no deep polls) until the day rolls over",
                         self.daily_cu_cap)

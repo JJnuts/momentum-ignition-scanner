@@ -13,6 +13,7 @@ from .config import ChainConfig, Config
 from .db import open_db, register_config
 from .ledger import CULedger
 from .plans import cu_cost, daily_cu_budget
+from . import clock as dayclock
 from .recorder import RawRecorder
 from .labeler import Labeler
 from .stage0 import CycleResult, Stage0Scanner
@@ -98,6 +99,7 @@ def projected_cu_per_day(cfg: Config) -> int:
 
 async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = False) -> RunSummary:
     conn = open_db(cfg.db_path)
+    dayclock.configure(cfg.timezone)
     ledger = CULedger(conn)
     recorder = RawRecorder(cfg.raw_dir, enabled=cfg.recorder_enabled)
     birdeye_cfg = cfg.raw.get("birdeye", {})
@@ -107,8 +109,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
     cfg_hash = register_config(conn, cfg.raw, int(started))
     log.info("config version %s registered", cfg_hash)
 
-    log.info("run start: plan=%s daily_cu_cap=%d cu_today=%d projected_cu/day=%d chains=%s",
-             cfg.birdeye_plan, daily_cap, ledger.today_total(), projected_cu_per_day(cfg),
+    log.info("run start: plan=%s daily_cu_cap=%d cu_today=%d (day tz %s) projected_cu/day=%d chains=%s",
+             cfg.birdeye_plan, daily_cap, ledger.today_total(), dayclock.tz_name(), projected_cu_per_day(cfg),
              [f"{c.name}@{c.scan_interval_s}s" for c in cfg.enabled_chains])
 
     async with BirdeyeClient(api_key=cfg.secret("BIRDEYE_API_KEY") or "", plan=cfg.birdeye_plan,
