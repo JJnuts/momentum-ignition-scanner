@@ -251,6 +251,30 @@ def tag_vetoes(flows: dict[str, dict[str, float]], window_sell_usd: float, s: di
     return out
 
 
+def sell_pressure(trades: list[Trade], cfg: dict[str, Any] | None = None,
+                  as_of: int | None = None) -> tuple[float, float | None]:
+    """(window sell USD, top-3 seller wallets' share of sell USD) over the same window evaluate() uses.
+    T15c: lets the runner skip the 25-CU holdings call when the DISTRIBUTION veto cannot fire
+    (share below seller_top3_share_min) and the 30-CU tag-flows call when the window has no sells."""
+    s = _settings(cfg)
+    ts = sorted((t for t in trades if t.ts is not None), key=lambda t: (t.ts, t.sig))
+    if as_of is not None:
+        ts = [t for t in ts if t.ts <= as_of]
+    window = ts[-int(s["window_trades"]):]
+    by_wallet: dict[str, float] = defaultdict(float)
+    sell_usd = 0.0
+    for t in window:
+        if t.side == "sell":
+            u = t.usd or 0.0
+            sell_usd += u
+            if t.wallet:
+                by_wallet[t.wallet] += u
+    if sell_usd <= 0:
+        return 0.0, None
+    top = sorted(by_wallet.values(), reverse=True)[:3]
+    return sell_usd, sum(top) / sell_usd
+
+
 def evaluate(trades: list[Trade], f: TapeFeatures, cfg: dict[str, Any] | None = None,
              liquidity: float | None = None, holdings_pct: dict[str, float] | None = None,
              tag_flows: dict[str, dict[str, float]] | None = None, as_of: int | None = None) -> WashReport:

@@ -27,7 +27,7 @@
     "solana": {
       "enabled": true,
       "birdeye_chain": "solana",
-      "scan_interval_s": 60,
+      "scan_interval_s": 120,
       "stage0": {
         "_comment": "filters are Birdeye token_list_v3 params passed verbatim; re-verified client-side",
         "filters": {
@@ -66,7 +66,7 @@
     "robinhood": {
       "enabled": true,
       "birdeye_chain": "robinhood",
-      "scan_interval_s": 120,
+      "scan_interval_s": 180,
       "stage0": {
         "_comment": "Robinhood list v3 has no 1m/5m/30m fields and holder is always null (T2) - filter/sort on 1h windows, no holder filter",
         "filters": {
@@ -130,7 +130,7 @@
     "slow_interval_s": 300
   },
   "labeler": {
-    "_comment": "close pass: scan_rows (free) -> multi_price (Lite+). path pass: one OHLCV 1m call at the final horizon per NOMINATION (45 CU) fills MFE/MAE for all horizons. Controls get close-based labels only.",
+    "_comment": "close pass: scan_rows (free) -> multi_price (Lite+). path pass: one OHLCV 1m call at the final horizon (45 CU) fills MFE/MAE for all horizons for the kinds in ohlcv_path_for; T15c: every ALERT, and a deterministic nomination_path_sample fraction of nominations (others -> path_status skipped). Controls get close-based labels only.",
     "horizons_min": [
       5,
       15,
@@ -141,7 +141,8 @@
     "tick_interval_s": 30,
     "scan_row_match_window_s": 90,
     "grace_s": 600,
-    "ohlcv_path_for": "nominations",
+    "ohlcv_path_for": ["alert", "nomination"],
+    "nomination_path_sample": 0.4,
     "max_path_attempts": 3,
     "path_deadline_s": 21600
   },
@@ -150,6 +151,8 @@
     "poll_interval_s": 60,
     "pages_on_first_fetch": 2,
     "refresh_every_n_polls": 3,
+    "refresh_every_n_polls_late": 6,
+    "late_after_s": 420,
     "ring_size": 600,
     "daily_cu_budget": 80000,
     "first_contact_min_span_s": 600,
@@ -206,11 +209,13 @@
       "bundler_sell_share_max": 0.4
     },
     "enrichment": {
-      "_comment": "Optional per-candidate Birdeye enrichments (Starter). holdings: top_traders 25 CU once per candidate (5-min cache) for the DISTRIBUTION veto. tag_flows: wallet-tags-tracker 30 CU, Solana only, once per candidate.",
+      "_comment": "Optional per-candidate Birdeye enrichments (Starter). holdings: top_traders 25 CU (15-min cache) for the DISTRIBUTION veto - T15c: fetched only when the tape's top-3 seller share >= holdings_min_seller_top3_share (= wash.seller_top3_share_min; below it the veto cannot fire). tag_flows: wallet-tags-tracker 30 CU, Solana only - T15c: skipped when the wash window has no sells.",
       "holdings_enabled": true,
-      "holdings_cache_s": 300,
+      "holdings_cache_s": 900,
+    "holdings_min_seller_top3_share": 0.6,
       "tag_flows_enabled": true,
-      "tag_flows_cache_s": 300,
+      "tag_flows_cache_s": 900,
+    "tag_flows_skip_without_sells": true,
       "tag_flows_lookback_s": 1800,
       "daily_cu_budget": 40000
     }

@@ -878,3 +878,28 @@ saves ~113k CU/day (452k -> 340k). Still ~100k over the 240k cap, so T15c
 (trims) is required, not optional. The user cannot take the Premium plan
 now. Manual override: `schedule.enabled: false` scans 24 h; `mode: slow`
 keeps one scan per slow_interval_s inside the block.
+
+---------------------------------------------------------------------------
+## 29. Cheapest-spend trims (T15c, 2026-09-11)
+
+Rule for every trim: the signal math and the veto semantics stay exactly
+what they were; only calls whose result cannot change a decision are
+skipped, and sampling is deterministic so replays agree with live.
+
+| lever | before | after | why it is free |
+|---|---|---|---|
+| Solana list scan | 60 s | 120 s | Stage-1 features come from the row's own 1m/5m/30m/1h fields |
+| Robinhood list scan | 120 s | 180 s | hourly mode normalises by the actual poll gap |
+| top_traders (holdings) | every candidate, 5-min cache | only when top-3 seller share >= 0.6, 15-min cache | DISTRIBUTION cannot fire below 0.6 |
+| wallet-tags-tracker | every Solana candidate, 5-min cache | only when the window has sells, 15-min cache | tag vetoes are shares of sell USD |
+| OHLCV candle paths | every nomination, no alerts | every ALERT + 40 % of nominations (crc32 sample) | alerts are what Milestone C judges; sample keeps the nomination MFE/MAE distribution unbiased |
+| tape refresh | every 3rd poll forever | every 6th poll after 420 s | no alert is possible after the 360 s eligibility window |
+
+Projection on the last 3 days of the ledger: 18.4k -> 12.6k CU per active
+hour, ~226k per 18-hour day with the 09-15 quiet block, under the 240k cap
+with ~6 % headroom. Two assumptions the live run must confirm (T15d): about
+half of holdings calls are gated, about a fifth of tape refreshes are late.
+If the cap is still hit, the next levers are the nomination sample (0.4 ->
+0.25) and the Solana holder-profile cache (10 min -> 20 min), in that order.
+Side effect worth keeping regardless of budget: alerts now get exact candle
+paths, so the backtest's "alert" exact-path section fills from the relaunch on.

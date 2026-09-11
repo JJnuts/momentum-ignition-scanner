@@ -38,6 +38,12 @@ class Enricher:
         self.tag_flows_enabled = bool(settings.get("tag_flows_enabled", True))
         self.tag_flows_cache_s = int(settings.get("tag_flows_cache_s", 300))
         self.tag_flows_lookback_s = int(settings.get("tag_flows_lookback_s", 1800))
+        # T15c gates: holdings only when the top-3 seller share can trigger DISTRIBUTION; tag flows only when
+        # the window has sells (tag_vetoes returns [] otherwise). None / False = always fetch (pre-T15c).
+        _m = settings.get("holdings_min_seller_top3_share")
+        self.holdings_min_share = float(_m) if _m is not None else None
+        self.tag_flows_skip_without_sells = bool(settings.get("tag_flows_skip_without_sells", False))
+        self.gated_skips = 0
         self.daily_cu_budget = int(settings.get("daily_cu_budget", 40_000))
         self.cu_today = 0
         self._day = day_key(clock())
@@ -76,7 +82,11 @@ class Enricher:
             return None
         return float(r["market_cap"]) / float(r["price"])
 
-    async def holdings(self, ch: ChainConfig, address: str) -> dict[str, float] | None:
+    async def holdings(self, ch: ChainConfig, address: str,
+                       seller_top3_share: float | None = None) -> dict[str, float] | None:
+        if self.holdings_min_share is not None and (seller_top3_share is None or seller_top3_share < self.holdings_min_share):
+            self.gated_skips += 1        # veto cannot fire on this window -> holdings irrelevant
+            return None
         """{wallet: supply %} for the token's top traders, or None if unavailable."""
         if not self.holdings_enabled or self.client is None:
             return None
@@ -99,7 +109,11 @@ class Enricher:
         self._store(ch.name, address, "holdings", out)
         return out
 
-    async def tag_flows(self, ch: ChainConfig, address: str, now: int | None = None) -> dict[str, dict[str, float]] | None:
+    async def tag_flows(self, ch: ChainConfig, address: str, now: int | None = None,
+                        window_sell_usd: float | None = None) -> dict[str, dict[str, float]] | None:
+        if self.tag_flows_skip_without_sells and window_sell_usd is not None and window_sell_usd <= 0:
+            self.gated_skips += 1        # tag vetoes are shares of SELL usd -> nothing to test
+            return None
         if not self.tag_flows_enabled or self.client is None or ch.birdeye_chain != "solana":
             return None
         cached = self._cached(ch.name, address, "tag_flows", self.tag_flows_cache_s)

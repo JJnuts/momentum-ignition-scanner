@@ -14,7 +14,8 @@ from scanner.stage1 import Stage1
 ROOT = Path(__file__).resolve().parent.parent
 CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 NOW = 1_788_866_000
-SETTINGS = dict(CFG["labeler"])
+# T15c path kinds / sampling are covered in test_trims.py; these tests use the legacy nomination-only path fill
+SETTINGS = {**CFG["labeler"], "ohlcv_path_for": "nominations", "nomination_path_sample": 1.0}
 
 
 def sol_cfg() -> ChainConfig:

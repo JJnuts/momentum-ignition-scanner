@@ -13,7 +13,8 @@ from scanner.wash import parse_tag_flows
 
 ROOT = Path(__file__).resolve().parent.parent
 CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-ECFG = CFG["stage2"]["enrichment"]
+# T15c gates are covered in test_trims.py; these tests exercise the ungated (legacy) paths
+ECFG = {**CFG["stage2"]["enrichment"], "holdings_min_seller_top3_share": None, "tag_flows_skip_without_sells": False}
 NOW = 1_788_866_000
 SOL = ChainConfig("solana", True, "solana", 60, {}, {})
 RH = ChainConfig("robinhood", True, "robinhood", 120, {}, {})

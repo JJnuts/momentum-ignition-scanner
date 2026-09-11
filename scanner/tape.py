@@ -295,6 +295,11 @@ class TapePoller:
         self.interval_s = int(settings.get("poll_interval_s", 60))
         self.first_pages = int(settings.get("pages_on_first_fetch", 2))
         self.refresh_every = max(1, int(settings.get("refresh_every_n_polls", 3)))
+        # T15c: after late_after_s since first contact (eligibility window closed) refresh every N_late polls
+        self.refresh_every_late = max(self.refresh_every, int(settings.get("refresh_every_n_polls_late", self.refresh_every)))
+        _l = settings.get("late_after_s")
+        self.late_after_s = int(_l) if _l is not None else None
+        self._first_seen: dict[tuple[str, str], float] = {}
         self.daily_cu_budget = int(settings.get("daily_cu_budget", 80_000))
         # first-contact depth: keep paging on first contact until the tape spans this much history
         # (the anchor needs a trailing baseline; hot tokens fit 200 trades in 2 minutes)
@@ -328,7 +333,13 @@ class TapePoller:
         for ch, address in active:
             tape = self.store.get(ch.name, address)
             first = tape.polls == 0
-            if not first and (tape.polls % self.refresh_every) != 0:
+            key = (ch.name, address)
+            if first:
+                self._first_seen[key] = self._clock()
+            late = (self.late_after_s is not None and key in self._first_seen
+                    and self._clock() - self._first_seen[key] >= self.late_after_s)
+            every = self.refresh_every_late if late else self.refresh_every
+            if not first and (tape.polls % every) != 0:
                 tape.polls += 1          # count the skipped slot so the cadence holds
                 st.skipped_refresh += 1
                 continue

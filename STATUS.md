@@ -26,7 +26,7 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T15 Replay backtester | DONE | 2026-09-09 | 220/220 pytest: synthetic tape reproduces live decision, planted backfill + config change reproduced via knowledge time / config version, exact-path rules on planted candles; real: 2344 decisions 94.7% match (legacy), gaps = backfill + eligibility config drift, fixed by schema v8 |
 | T15a Budget audit + local-day reset | DONE | 2026-09-11 | 224/224 pytest: day boundary follows config.timezone (Sofia vs UTC), ledger today_total local, report dark hours/cap-hit/projection exact on planted ledger; real report matches hand tally (10 dark h 17:00-03:00) |
 | T15b Active window (quiet block 09-15 local) | DONE | 2026-09-11 | 228/228 pytest: boundaries follow config.timezone, off/slow/disabled intervals, overnight wrap, next_transition, budget report quiet saving; config diff = schedule block only (thresholds untouched); live projection: saves 113k/day, still 100k over -> T15c |
-| T15c Cheapest-spend trims | todo (only if needed after T15d) | | |
+| T15c Cheapest-spend trims | DONE | 2026-09-11 | 236/236 pytest: Stage-1 features identical at 60 s vs 120 s spacing (short) and 180 s prev poll (hourly); holdings fetched only when top-3 seller share >= 0.6; tag flows skipped without sells; alerts always get candle paths, nominations sampled 40 % deterministically; tape refresh every 6th poll after 420 s. Projection from the live ledger: 452k -> ~226k CU/day (cap 240k) |
 | T15d Live verification (no dark hours) | todo | | |
 
 ## T0 notes (2026-09-08)
@@ -269,6 +269,26 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - Acceptance "alert at 08:59 still gets +60 labels / rug checks" is structural (those loops never see the schedule);
   confirmed live in T15d.
 - Live scanner still on pre-T15a/b code; single relaunch after T15c.
+
+## T15c notes (2026-09-11)
+- Scan intervals: Solana 60 -> 120 s, Robinhood 120 -> 180 s. Stage-1 math reads list-row fields (vol_1m/5m/30m/1h),
+  not poll spacing; tests prove identical rvol/eff/pct at both spacings and holder growth still finds a -5 min row.
+  Hourly mode normalises by prev_dt, works with a 180 s previous poll.
+- `wash.sell_pressure(trades, cfg)` -> (window sell USD, top-3 seller share) on the same window as evaluate().
+  Enricher.holdings(seller_top3_share=) skips the 25-CU top_traders call when the share is below
+  holdings_min_seller_top3_share (0.6 = wash.seller_top3_share_min; the DISTRIBUTION veto cannot fire below it).
+  Enricher.tag_flows(window_sell_usd=) skips the 30-CU call when the window has no sells (tag_vetoes returns []).
+  Caches 300 -> 900 s. Semantics of every veto unchanged; `gated=` counter on the enrichment log line.
+- Labeler: ohlcv_path_for is now a list of kinds (legacy strings accepted) = ["alert", "nomination"];
+  nomination_path_sample 0.4, deterministic crc32(chain:address:t0) so a restart picks the same events; skipped ones
+  get path_status 'skipped'. ALERTS NOW GET CANDLE PATHS (they never did before) -> backtest exact-path outcomes on
+  alerts from here on. Close labels unaffected.
+- Tape: refresh_every_n_polls_late 6 after late_after_s 420 since first contact (eligibility ends 360 s after the
+  anchor); a re-entered token (fresh tape) is early again.
+- Projection against the last 3 days of the ledger (assumes 50 % of holdings calls gated, 20 % of tape refreshes
+  late): 18,391 -> 12,570 CU per active hour = ~226k/day over 18 active hours vs cap 240k. T15d measures it.
+- Old tests in test_enrichment / test_labeler pin the legacy settings; the new behaviour is in tests/test_trims.py.
+- Live scanner still on pre-T15 code. ONE relaunch now picks up T15a+b+c.
 
 ## Commands
     python -m pytest              # unit tests

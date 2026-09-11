@@ -27,7 +27,7 @@ from .schedule import Schedule
 from .safety import SafetyChecker
 from .scoring import decide, latest_stage1_features, persist_decision
 from .tape import TapePoller, TapeStore, persist_features
-from .wash import evaluate as evaluate_wash
+from .wash import evaluate as evaluate_wash, sell_pressure
 
 log = logging.getLogger("runner")
 
@@ -349,8 +349,9 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                 trades = tape.trades()
                 f = compute_features(trades, feat_cfg)
                 # enrichments are awaited OUTSIDE any transaction (network); cached + budgeted
-                holdings = await enricher.holdings(ch, address)
-                flows = await enricher.tag_flows(ch, address)
+                sell_usd, top3_share = sell_pressure(trades, wash_cfg)
+                holdings = await enricher.holdings(ch, address, seller_top3_share=top3_share)
+                flows = await enricher.tag_flows(ch, address, window_sell_usd=sell_usd)
                 w = evaluate_wash(trades, f, wash_cfg, liquidity=latest_liquidity(ch.name, address),
                                   holdings_pct=holdings, tag_flows=flows)
                 cand = manager.active_set.get((ch.name, address))
@@ -398,8 +399,8 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                          ",".join(w.hard_vetoes) or "-", ",".join(w.soft_flags) or "-",
                          " -> REMOVED" if outcome == "vetoed" else "")
             if enricher.calls or enricher.cache_hits:
-                log.info("enrichment: calls=%d cache_hits=%d budget_skips=%d cu_today=%d/%d",
-                         enricher.calls, enricher.cache_hits, enricher.budget_skips,
+                log.info("enrichment: calls=%d cache_hits=%d gated=%d budget_skips=%d cu_today=%d/%d",
+                         enricher.calls, enricher.cache_hits, enricher.gated_skips, enricher.budget_skips,
                          enricher.cu_today, enricher.daily_cu_budget)
 
         tasks = [asyncio.create_task(chain_loop(ch), name=f"chain:{ch.name}") for ch in cfg.enabled_chains]

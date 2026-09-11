@@ -23,6 +23,7 @@ import math
 import random
 import sqlite3
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -56,6 +57,7 @@ class TickStats:
     path_done: int = 0
     path_failed: int = 0
     path_skipped_budget: int = 0
+    path_skipped_sample: int = 0
     cu: int = 0
 
 
@@ -74,7 +76,14 @@ class Labeler:
         self.tick_interval_s = int(settings.get("tick_interval_s", 30))
         self.match_window_s = int(settings.get("scan_row_match_window_s", 90))
         self.grace_s = int(settings.get("grace_s", 600))
-        self.path_for = str(settings.get("ohlcv_path_for", "nominations"))   # nominations | all | none
+        pf = settings.get("ohlcv_path_for", "nominations")   # legacy str: nominations | all | none; or a list of kinds
+        if isinstance(pf, str):
+            pf = {"nominations": ["nomination"], "all": ["nomination", "control"], "none": []}.get(pf, [pf])
+        self.path_kinds: list[str] = [str(k) for k in pf]
+        self.path_for = "none" if not self.path_kinds else "custom"
+        # T15c: only this fraction of nominations gets the 45-CU candle path (deterministic per event);
+        # alerts always do when 'alert' is in path_kinds. Close labels are unaffected.
+        self.nomination_path_sample = float(settings.get("nomination_path_sample", 1.0))
         self.max_path_attempts = int(settings.get("max_path_attempts", 3))
         self.path_deadline_s = int(settings.get("path_deadline_s", 6 * 3600))
 
@@ -220,10 +229,10 @@ class Labeler:
             (now, price, liq, source, label_id))
 
     async def _path_pass(self, chains: dict[str, ChainConfig], now: int, st: TickStats) -> int:
-        if self.path_for == "none" or self.client is None:
+        if not self.path_kinds or self.client is None:
             return 0
         max_h = max(self.horizons)
-        kinds = "('nomination')" if self.path_for == "nominations" else "('nomination','control')"
+        kinds = "(" + ",".join("'" + k + "'" for k in self.path_kinds) + ")"
         # one event = (ref_kind, ref_id); its path is due when the final horizon has passed
         events = self.conn.execute(
             f"SELECT ref_kind, ref_id, chain, address, t0_ts, MIN(attempts) AS attempts FROM labels "
@@ -235,6 +244,10 @@ class Labeler:
             chain, address, t0 = ev["chain"], ev["address"], int(ev["t0_ts"])
             where = "ref_kind=? AND ref_id=? AND chain=? AND address=?"
             args = (ev["ref_kind"], ev["ref_id"], chain, address)
+            if ev["ref_kind"] == "nomination" and not self.in_path_sample(chain, address, t0):
+                self.conn.execute(f"UPDATE labels SET path_status='skipped' WHERE {where}", args)
+                st.path_skipped_sample += 1
+                continue
             if now - (t0 + max_h * 60) > self.path_deadline_s or int(ev["attempts"]) >= self.max_path_attempts:
                 self.conn.execute(f"UPDATE labels SET path_status='failed' WHERE {where}", args)
                 st.path_failed += 1
@@ -259,6 +272,14 @@ class Labeler:
             self.apply_path(ev["ref_kind"], ev["ref_id"], chain, address, t0, candles)
             st.path_done += 1
         return cu
+
+    def in_path_sample(self, chain: str, address: str, t0: int) -> bool:
+        if self.nomination_path_sample >= 1.0:
+            return True
+        if self.nomination_path_sample <= 0.0:
+            return False
+        h = zlib.crc32(f"{chain}:{address}:{int(t0)}".encode()) % 10_000
+        return h < int(round(self.nomination_path_sample * 10_000))
 
     def apply_path(self, ref_kind: str, ref_id: int | None, chain: str, address: str, t0: int,
                    candles: list[dict[str, Any]]) -> dict[int, tuple[float, float, float]]:
