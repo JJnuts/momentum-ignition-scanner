@@ -227,3 +227,18 @@ async def test_first_contact_depth_pages_until_span_covers_baseline(tmp_path):
     p2 = TapePoller(c2, TapeStore(conn2), CULedger(conn2), settings, 100_000, clock=lambda: float(t_now))
     await p2.poll([(SOL, TOKEN)])
     assert len(c2.calls) == 2 and p2.deep_fetches == 0
+
+
+def test_store_loads_db_history_even_if_first_touched_without_loading(tmp_path):
+    """Milestone C reproducibility finding: the runner peeked at a tape with load_from_db=False, which cached an
+    empty ring; the DB history was then never loaded and live evaluated on fewer trades than the replay."""
+    conn = open_db(tmp_path / "t.sqlite")
+    store = TapeStore(conn)
+    store.ingest("solana", TOKEN, [sol_item(i, 1000 - i) for i in range(50)])
+    store.drop("solana", TOKEN)                                   # process restart / candidate expiry
+    assert store.polls_of("solana", TOKEN) == 0 and ("solana", TOKEN) not in store.tapes   # peek creates nothing
+    t0 = store.get("solana", TOKEN, load_from_db=False)
+    assert len(t0) == 0 and not t0.loaded_from_db
+    t1 = store.get("solana", TOKEN)                               # the poller's normal get -> history arrives
+    assert t1 is t0 and len(t1) == 50 and t1.loaded_from_db
+    assert len(store.get("solana", TOKEN)) == 50                  # loaded once, not re-added

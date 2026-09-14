@@ -94,6 +94,7 @@ class TokenTape:
         self._sigs: set[str] = set()
         self.polls = 0
         self.last_fetch_ts: int | None = None
+        self.loaded_from_db = False   # DB history pulled into the ring (Milestone C fix, 2026-09-14)
 
     def __len__(self) -> int:
         return len(self._trades)
@@ -161,9 +162,17 @@ class TapeStore:
         if tape is None:
             tape = TokenTape(chain, address, self.ring_size)
             self.tapes[key] = tape
-            if load_from_db:
-                tape.add(self.load(chain, address, self.ring_size))
+        if load_from_db and not tape.loaded_from_db:
+            # Milestone C finding: a tape first touched with load_from_db=False stayed empty forever, so live
+            # evaluated on the freshly fetched page only while the DB (and the replay) knew up to ring_size trades.
+            tape.add(self.load(chain, address, self.ring_size))
+            tape.loaded_from_db = True
         return tape
+
+    def polls_of(self, chain: str, address: str) -> int:
+        """Poll count of an in-memory tape WITHOUT creating one (0 if the token is not loaded)."""
+        t = self.tapes.get((chain, address))
+        return t.polls if t is not None else 0
 
     def drop(self, chain: str, address: str) -> None:
         self.tapes.pop((chain, address), None)

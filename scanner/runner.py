@@ -247,7 +247,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                         fresh = [(ch, row.address) for _, row in s1.nominated_rows
                                  if (ch.name, row.address) in manager.active_set
                                  and manager.active_set[(ch.name, row.address)].polls == 0
-                                 and store.get(ch.name, row.address, load_from_db=False).polls == 0]
+                                 and store.polls_of(ch.name, row.address) == 0]
                         if fresh and not manager.degraded(res.ts):
                             asyncio.create_task(poll_and_evaluate(fresh, "on-nomination"))
                         lb = labeler.on_cycle(ch, s1, res.ts, res.cycle_id)

@@ -290,6 +290,16 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 - Old tests in test_enrichment / test_labeler pin the legacy settings; the new behaviour is in tests/test_trims.py.
 - Live scanner still on pre-T15 code. ONE relaunch now picks up T15a+b+c.
 
+## Milestone C evaluation notes (2026-09-14)
+- Gate met: Solana 505 alerts (414 labeled), Robinhood 225 (204 labeled). tune -> reports/tune_c.md, backtest ->
+  reports/backtest_c.md (74,999 decisions, 451 s).
+- Reproducibility 88.2 % on the exact subset; ALL 7,808 mismatches in a 15k sample were "replay has more trades
+  than live". Cause: runner peeked at new candidates with store.get(load_from_db=False), which cached an EMPTY ring,
+  so DB history was never loaded and live evaluated on the freshly fetched page only. Fixed: TapeStore loads history
+  on the first load_from_db=True get of an unloaded tape; runner uses store.polls_of() (no creation). Regression
+  test in test_tape.py. Takes effect on the next relaunch; historic rows keep their mismatch.
+- Findings for the tuning pass: see SPEC s30.
+
 ## Commands
     python -m pytest              # unit tests
     python -m scanner selftest    # offline self-check (or double-click selftest.bat)
