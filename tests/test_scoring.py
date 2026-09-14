@@ -159,3 +159,20 @@ def test_soft_safety_flags_cap_confirmed_at_ignition():
     d2 = decide("solana", "A", feats(), wash(), SCFG, NOW, s1_features=s1(), s1_ts=NOW,
                 safety_verdict="SAFE", safety_bonus=3.0, safety_flags=["min_holders", "smart_trader_present"])
     assert d2.tier == "CONFIRMED"      # informational flags do not cap
+
+
+def test_per_chain_override_raises_solana_ignition_bar_only():
+    """Milestone C (2026-09-14): scoring.chains.solana.tier_ignition_score = 60; Robinhood keeps the global 55."""
+    from scanner.scoring import _settings
+    cfg = {**SCFG, "chains": {"solana": {"tier_ignition_score": 60}}}
+    assert _settings(cfg, "solana")["tier_ignition_score"] == 60
+    assert _settings(cfg, "robinhood")["tier_ignition_score"] == 55 == _settings(cfg)["tier_ignition_score"]
+    assert "chains" not in _settings(cfg, "solana")
+    f = feats()
+    base = decide("solana", "A", f, wash(), SCFG, NOW, s1_features=s1(eff_pct=70, hg=1.5), s1_ts=NOW - 30)
+    # put both bars just above this fixture's score on Solana only -> Solana drops to WATCH, Robinhood unchanged
+    over = {**SCFG, "chains": {"solana": {"tier_ignition_score": base.score + 0.5, "tier_confirmed_score": base.score + 1}}}
+    lo = decide("solana", "A", f, wash(), over, NOW, s1_features=s1(eff_pct=70, hg=1.5), s1_ts=NOW - 30)
+    rh = decide("robinhood", "A", f, wash(), over, NOW, s1_features=s1(eff_pct=70, hg=1.5), s1_ts=NOW - 30)
+    assert base.tier in ("IGNITION", "CONFIRMED") and lo.tier == "WATCH" and rh.tier == base.tier
+    assert lo.score == base.score == rh.score          # the override moves the bar, never the score

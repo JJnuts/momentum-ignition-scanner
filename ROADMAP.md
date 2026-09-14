@@ -215,6 +215,8 @@ allowed on Starter). Signal thresholds stay FROZEN throughout.**
   - Accept: budget report shows 0 dark hours; heartbeat CU < cap at 23:00.
 
 **MILESTONE C — first tuning pass from T14 → refreeze → second window.**
+  DONE 2026-09-14 (SPEC s30): Solana IGNITION 55 -> 60, Robinhood unchanged, FROZEN v2.
+  Second window runs to MILESTONE D: n >= 100 IGNITION+CONFIRMED per chain after 2026-09-14.
 
 ---------------------------------------------------------------------------
 ## PHASE 6 — v2 (after Milestone C; not scoped yet)

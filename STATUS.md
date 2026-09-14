@@ -28,6 +28,7 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T15b Active window (quiet block 09-15 local) | DONE | 2026-09-11 | 228/228 pytest: boundaries follow config.timezone, off/slow/disabled intervals, overnight wrap, next_transition, budget report quiet saving; config diff = schedule block only (thresholds untouched); live projection: saves 113k/day, still 100k over -> T15c |
 | T15c Cheapest-spend trims | DONE | 2026-09-11 | 236/236 pytest: Stage-1 features identical at 60 s vs 120 s spacing (short) and 180 s prev poll (hourly); holdings fetched only when top-3 seller share >= 0.6; tag flows skipped without sells; alerts always get candle paths, nominations sampled 40 % deterministically; tape refresh every 6th poll after 420 s. Projection from the live ledger: 452k -> ~226k CU/day (cap 240k) |
 | T15d Live verification (no dark hours) | todo | | |
+| Milestone C tuning pass | DONE | 2026-09-14 | 238/238 pytest; one change: Solana IGNITION bar 55 -> 60 (per-chain scoring override), thresholds FROZEN v2; tape-history fix; SPEC s30 |
 
 ## T0 notes (2026-09-08)
 - Layout: `scanner/` package (`config`, `plans`, `db`, `recorder`, `logging_setup`, `__main__`),

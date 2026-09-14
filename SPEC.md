@@ -903,3 +903,41 @@ If the cap is still hit, the next levers are the nomination sample (0.4 ->
 0.25) and the Solana holder-profile cache (10 min -> 20 min), in that order.
 Side effect worth keeping regardless of budget: alerts now get exact candle
 paths, so the backtest's "alert" exact-path section fills from the relaunch on.
+
+---------------------------------------------------------------------------
+## 30. Milestone C - first tuning pass (2026-09-14)
+
+Data: Solana 505 alerts (72 CONFIRMED / 433 IGNITION, 414 labeled),
+Robinhood 225 IGNITION (204 labeled), 5,308 nominations, 3,644 controls,
+74,999 decisions replayed. Reports: reports/tune_c.md, reports/backtest_c.md.
+
+What held up:
+- Tiers work on Solana. P(+10 % within 15 m) by score band: 55-59 17 %,
+  60-64 26 %, 65-69 34 %, 70-74 40 %, 75-84 44 % (85+ 21 %, n=19).
+  CONFIRMED 59 % vs IGNITION 29 %. The 75 line stays.
+- Alerts vs controls (both close-based): 11 % vs 5 % = 2.2x lift.
+- Exact paths (48 alerts): stop hit 21 %, rule A +5.5 % mean / 50 % win,
+  rule B +5.9 % / 46 % with a worse median. MAE p25 at 15 m -10 %, p10 -22 %.
+  The -20 % stop and the 15 m time stop stay; rule A remains primary.
+- Buyer breadth is the strongest feature inside alerts (1.57x), efficiency
+  second (1.31x). rVol level past the gate flat/inverse; cohort z inverse
+  but gates nothing. No feature weight changes this pass.
+
+What did not:
+- Robinhood: the score does not separate outcomes (19-23 % in every band,
+  70-74 worst). Efficiency (no 5 m fields) and holder growth (no holder
+  counts) are structurally 0 there, so the score is participation + order
+  flow + structure only. A lower CONFIRMED bar would relabel without
+  information. Decision: no Robinhood change; revisit when a Robinhood-
+  specific feature (e.g. tx-count delta) shows lift.
+- Reproducibility 88 %: every mismatch was live evaluating on fewer trades
+  than the DB held (fresh-check peek cached an empty ring). Fixed in code;
+  expectation for the second window is ~100 % on the exact subset.
+
+The one change (FROZEN v2): scoring.chains.solana.tier_ignition_score
+55 -> 60. Removes the 55-59 band = 63 of 505 Solana alerts (12 %; 58 of the 414 labeled), the
+worst slice on every measure (17 % win, worst 60 m mean). Robinhood keeps
+55. Per-chain overrides live under scoring.chains.<name> and apply to any
+scoring key. Next review: Milestone D after a second window of n >= 100
+IGNITION+CONFIRMED per chain collected after 2026-09-14 with the T15
+budget fixes and the tape-history fix in effect.

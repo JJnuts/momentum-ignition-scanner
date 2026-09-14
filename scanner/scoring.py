@@ -39,15 +39,22 @@ DEFAULTS: dict[str, Any] = {
 CAP_FLAGS = {"bundler_holdings", "sniper_holdings", "token2022_extensions"}
 
 
-def _settings(cfg: dict[str, Any] | None) -> dict[str, Any]:
-    s = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
-    for k, v in (cfg or {}).items():
-        if k.startswith("_"):
+def _merge(s: dict[str, Any], over: dict[str, Any]) -> None:
+    for k, v in over.items():
+        if k.startswith("_") or k == "chains":
             continue
         if isinstance(v, dict) and isinstance(s.get(k), dict):
             s[k].update(v)
         else:
             s[k] = v
+
+
+def _settings(cfg: dict[str, Any] | None, chain: str | None = None) -> dict[str, Any]:
+    """DEFAULTS <- cfg <- cfg['chains'][chain] (per-chain override, Milestone C 2026-09-14: Solana IGNITION bar 60)."""
+    s = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
+    _merge(s, cfg or {})
+    per_chain = ((cfg or {}).get("chains") or {}).get(chain or "") or {}
+    _merge(s, per_chain)
     return s
 
 
@@ -145,7 +152,7 @@ def decide(chain: str, address: str, f: TapeFeatures, wash: WashReport, cfg: dic
     """safety_verdict: SAFE | UNSAFE | UNKNOWN | None. UNSAFE -> hard veto 'SAFETY:<reasons>';
     UNKNOWN -> tier capped at IGNITION (never CONFIRMED on unverified safety) + soft flag.
     safety_flags in CAP_FLAGS (bundle / sniper / risky token-2022 extensions) also cap at IGNITION (SPEC s6)."""
-    s = _settings(cfg)
+    s = _settings(cfg, chain)
     comps = score_components(f, s1_features, s1_ts, s, safety_bonus)
     score = round(sum(c.points for c in comps), 2)
     hard, soft = list(wash.hard_vetoes), list(wash.soft_flags)

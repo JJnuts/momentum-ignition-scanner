@@ -221,7 +221,7 @@
     }
   },
   "scoring": {
-    "_comment": "T9 (SPEC s10). score = participation 30 + orderflow 25 + efficiency 15 + structure 15 + holder_growth 10 + safety 5. Vetoes always win. Eligibility window in seconds after the anchor (tape onset, else Stage-1 nomination time). Measured 2026-09-09: Stage 1 nominates a median 112 s (p75 203 s) after the tape onset and the first Stage-2 evaluation adds up to one tape-loop tick, so [30,180] rejected ~half of first evaluations -> [30,360]. Newly entered candidates are now evaluated immediately on nomination. FROZEN from Milestone B.",
+    "_comment": "T9 (SPEC s10). score = participation 30 + orderflow 25 + efficiency 15 + structure 15 + holder_growth 10 + safety 5. Vetoes always win. Eligibility window in seconds after the anchor (tape onset, else Stage-1 nomination time). Measured 2026-09-09: Stage 1 nominates a median 112 s (p75 203 s) after the tape onset and the first Stage-2 evaluation adds up to one tape-loop tick, so [30,180] rejected ~half of first evaluations -> [30,360]. Newly entered candidates are now evaluated immediately on nomination. FROZEN v2 from Milestone C (2026-09-14): one change, scoring.chains.solana.tier_ignition_score 60. Next review at Milestone D (second window, n >= 100 IGNITION+CONFIRMED per chain after 2026-09-14).",
     "weights": {
       "participation": 30,
       "orderflow": 25,
@@ -259,6 +259,10 @@
     },
     "tier_ignition_score": 55,
     "tier_confirmed_score": 75,
+    "chains": {
+      "_comment": "Per-chain overrides of any scoring key (Milestone C, 2026-09-14). Solana IGNITION bar 55 -> 60: the 55-59 band won +10%/15m only 17% of the time vs 26-44% above it and had the worst 60m mean; Robinhood keeps 55 (its 55-59 band is average for that chain; the score does not discriminate there because efficiency and holder components are structurally unavailable).",
+      "solana": {"tier_ignition_score": 60}
+    },
     "eligible_after_anchor_s": [
       30,
       360
