@@ -22,10 +22,11 @@ from .candidates import CandidateManager
 from .enrichment import Enricher
 from .features import compute as compute_features
 from .alerts import Alerter, DiscordWebhook
+from .nearmiss import NearMissLog, classify as classify_near_miss
 from .rugwatch import RugWatch
 from .schedule import Schedule
 from .safety import SafetyChecker
-from .scoring import decide, latest_stage1_features, persist_decision
+from .scoring import _settings as scoring_settings, decide, latest_stage1_features, persist_decision
 from .tape import TapePoller, TapeStore, persist_features
 from .wash import evaluate as evaluate_wash, sell_pressure
 
@@ -147,6 +148,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
         webhook = DiscordWebhook(webhook_url, str(alerts_cfg.get("user_agent") or Alerter.__init__.__globals__["DEFAULTS"]["user_agent"]),
                                  str(alerts_cfg.get("username", "Momentum Ignition Scanner")))
         alerter = Alerter(conn, webhook, alerts_cfg, rugwatch=rugwatch, labeler=labeler)
+        nearmiss = NearMissLog(conn, cfg.raw.get("near_miss"), labeler=labeler)
         log.info("alerts: channel=%s webhook=%s", "test" if cfg.discord_use_test else "LIVE",
                  "configured" if webhook.enabled else "MISSING -> dry run")
 
@@ -375,6 +377,7 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                     conn.execute("ROLLBACK")
                     raise
                 decision_totals[d.tier] = decision_totals.get(d.tier, 0) + 1
+                outcome_alert = None
                 if d.alertable:
                     decision_totals["alertable"] = decision_totals.get("alertable", 0) + 1
                     try:
@@ -384,6 +387,19 @@ async def run_loop(cfg: Config, duration_s: float | None = None, once: bool = Fa
                         decision_totals[f"alert:{outcome_alert}"] = decision_totals.get(f"alert:{outcome_alert}", 0) + 1
                     except Exception:  # noqa: BLE001
                         log.exception("alert dispatch crashed for %s %s", ch.name, address[:8])
+                if nearmiss.enabled:
+                    ss = scoring_settings(scoring_cfg, ch.name)
+                    nm = classify_near_miss(d, float(ss["tier_ignition_score"]), int(ss["eligible_after_anchor_s"][1]),
+                                            alert_outcome=outcome_alert, score_margin=float(nearmiss.s["score_margin"]))
+                    if nm is not None:
+                        row_ = latest_row(ch.name, address)
+                        nm_price = f.price if f.price is not None else getattr(row_, "price", None)
+                        rid = nearmiss.record(ch.name, address, decision_id, nm, ts=eval_ts, price=nm_price,
+                                              liquidity=latest_liquidity(ch.name, address))
+                        if rid is not None:
+                            decision_totals[f"near_miss:{nm.kind}"] = decision_totals.get(f"near_miss:{nm.kind}", 0) + 1
+                            log.info("near miss %s %s: %s/%s score=%.0f margin=%s", ch.name,
+                                     cand.symbol if cand and cand.symbol else address[:8], nm.kind, nm.reason, nm.score, nm.margin)
                 outcome = manager.on_tape(ch, address, f.ofi30.ofi, d.hard_vetoes, eval_ts,
                                           anchor_ts=f.anchor_ts, anchor_price=f.anchor_price)
                 if outcome == "vetoed":

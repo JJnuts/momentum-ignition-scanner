@@ -29,6 +29,7 @@ See ROADMAP.md for task definitions, SPEC.md for design.
 | T15c Cheapest-spend trims | DONE | 2026-09-11 | 236/236 pytest: Stage-1 features identical at 60 s vs 120 s spacing (short) and 180 s prev poll (hourly); holdings fetched only when top-3 seller share >= 0.6; tag flows skipped without sells; alerts always get candle paths, nominations sampled 40 % deterministically; tape refresh every 6th poll after 420 s. Projection from the live ledger: 452k -> ~226k CU/day (cap 240k) |
 | T15d Live verification (no dark hours) | todo | | |
 | Milestone C tuning pass | DONE | 2026-09-14 | 238/238 pytest; one change: Solana IGNITION bar 55 -> 60 (per-chain scoring override), thresholds FROZEN v2; tape-history fix; SPEC s30 |
+| Near-miss (why-not) log | DONE | 2026-09-15 | 242/242 pytest: classify score/veto/policy/late + non-cases, dedupe per episode + daily cap + labels enqueued, schema v9, tune section 7 verdicts on planted data |
 
 ## T0 notes (2026-09-08)
 - Layout: `scanner/` package (`config`, `plans`, `db`, `recorder`, `logging_setup`, `__main__`),
@@ -300,6 +301,18 @@ See ROADMAP.md for task definitions, SPEC.md for design.
   on the first load_from_db=True get of an unloaded tape; runner uses store.polls_of() (no creation). Regression
   test in test_tape.py. Takes effect on the next relaunch; historic rows keep their mismatch.
 - Findings for the tuning pass: see SPEC s30.
+
+## Near-miss log notes (2026-09-15)
+- `scanner/nearmiss.py`: classify(decision, ignition_bar, eligible_max_s, alert_outcome) -> score | veto:<name> |
+  policy:cooldown/hourly_cap | late; NearMissLog.record dedupes per (chain, address, kind, reason) inside
+  cooldown_min, caps rows per local day, enqueues labels (ref_kind near_miss) via the labeler.
+- Runner: after every decision (+ the alert outcome) -> classify -> record; `near_miss:<kind>` counters in the
+  decision totals; log line "near miss ...". Analysis only: never changes a decision or an alert.
+- Labeler: per-kind path sample (near_miss_path_sample 0.4); tune.py loads near_miss events and renders
+  "## 7. Near misses - why not" with a verdict per reason (DISCARDING WINNERS if >= alert win rate, or >= 2x
+  controls before alerts are labeled; correctly excluded if ~controls).
+- Schema v9: near_misses. Live scanner picks it up on the next relaunch (no rush: the week's data is collected
+  either way; near misses start accumulating from the relaunch).
 
 ## Commands
     python -m pytest              # unit tests

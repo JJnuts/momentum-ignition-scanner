@@ -84,6 +84,8 @@ class Labeler:
         # T15c: only this fraction of nominations gets the 45-CU candle path (deterministic per event);
         # alerts always do when 'alert' is in path_kinds. Close labels are unaffected.
         self.nomination_path_sample = float(settings.get("nomination_path_sample", 1.0))
+        self.path_samples: dict[str, float] = {"nomination": self.nomination_path_sample,
+                                              "near_miss": float(settings.get("near_miss_path_sample", 1.0))}
         self.max_path_attempts = int(settings.get("max_path_attempts", 3))
         self.path_deadline_s = int(settings.get("path_deadline_s", 6 * 3600))
 
@@ -244,7 +246,7 @@ class Labeler:
             chain, address, t0 = ev["chain"], ev["address"], int(ev["t0_ts"])
             where = "ref_kind=? AND ref_id=? AND chain=? AND address=?"
             args = (ev["ref_kind"], ev["ref_id"], chain, address)
-            if ev["ref_kind"] == "nomination" and not self.in_path_sample(chain, address, t0):
+            if ev["ref_kind"] in self.path_samples and not self.in_path_sample(chain, address, t0, ev["ref_kind"]):
                 self.conn.execute(f"UPDATE labels SET path_status='skipped' WHERE {where}", args)
                 st.path_skipped_sample += 1
                 continue
@@ -273,13 +275,14 @@ class Labeler:
             st.path_done += 1
         return cu
 
-    def in_path_sample(self, chain: str, address: str, t0: int) -> bool:
-        if self.nomination_path_sample >= 1.0:
+    def in_path_sample(self, chain: str, address: str, t0: int, kind: str = "nomination") -> bool:
+        frac = self.path_samples.get(kind, 1.0)
+        if frac >= 1.0:
             return True
-        if self.nomination_path_sample <= 0.0:
+        if frac <= 0.0:
             return False
         h = zlib.crc32(f"{chain}:{address}:{int(t0)}".encode()) % 10_000
-        return h < int(round(self.nomination_path_sample * 10_000))
+        return h < int(round(frac * 10_000))
 
     def apply_path(self, ref_kind: str, ref_id: int | None, chain: str, address: str, t0: int,
                    candles: list[dict[str, Any]]) -> dict[int, tuple[float, float, float]]:

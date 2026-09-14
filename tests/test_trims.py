@@ -160,7 +160,7 @@ def _labels(conn, kind):
 @pytest.mark.asyncio
 async def test_alerts_always_get_paths_nominations_are_sampled_deterministically(tmp_path):
     settings = dict(CFG["labeler"]); settings["control_sample_per_cycle"] = 0
-    assert settings["ohlcv_path_for"] == ["alert", "nomination"] and settings["nomination_path_sample"] == 0.4
+    assert settings["ohlcv_path_for"] == ["alert", "nomination", "near_miss"] and settings["nomination_path_sample"] == 0.4
     chains = {"solana": SOL}
     picked = {}
     for run in (1, 2):

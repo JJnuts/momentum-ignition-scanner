@@ -129,6 +129,13 @@
     "mode": "off",
     "slow_interval_s": 300
   },
+  "near_miss": {
+    "_comment": "Why-not log (2026-09-15). Records once per candidate episode why a decision did not alert: score (within score_margin below the chain IGNITION bar), veto (score >= bar, exactly one hard veto), policy (cooldown / hourly cap), late (past the eligibility window). Labeled like controls (+ sampled candle path); tune.py section 7 compares each reason with alerts and controls. Analysis only - never changes a decision.",
+    "enabled": true,
+    "score_margin": 10.0,
+    "cooldown_min": 20,
+    "daily_max": 400
+  },
   "labeler": {
     "_comment": "close pass: scan_rows (free) -> multi_price (Lite+). path pass: one OHLCV 1m call at the final horizon (45 CU) fills MFE/MAE for all horizons for the kinds in ohlcv_path_for; T15c: every ALERT, and a deterministic nomination_path_sample fraction of nominations (others -> path_status skipped). Controls get close-based labels only.",
     "horizons_min": [
@@ -141,8 +148,9 @@
     "tick_interval_s": 30,
     "scan_row_match_window_s": 90,
     "grace_s": 600,
-    "ohlcv_path_for": ["alert", "nomination"],
+    "ohlcv_path_for": ["alert", "nomination", "near_miss"],
     "nomination_path_sample": 0.4,
+    "near_miss_path_sample": 0.4,
     "max_path_attempts": 3,
     "path_deadline_s": 21600
   },

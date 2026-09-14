@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA: list[str] = [
     # key/value state (schema version, cursors, daily budget counters)
@@ -258,6 +258,24 @@ MIGRATIONS: dict[int, list[str]] = {
         )""",
         "CREATE INDEX IF NOT EXISTS ix_trades_ingested ON trades(chain, address, ingested_ts)",
     ],
+    9: [  # near-miss ("why not") log, 2026-09-15
+        """CREATE TABLE IF NOT EXISTS near_misses(
+            id          INTEGER PRIMARY KEY,
+            decision_id INTEGER,
+            chain       TEXT    NOT NULL,
+            address     TEXT    NOT NULL,
+            ts          INTEGER NOT NULL,
+            kind        TEXT    NOT NULL,        -- score | veto | policy | late
+            reason      TEXT    NOT NULL,        -- score | <veto name> | cooldown | hourly_cap | late
+            score       REAL,
+            tier        TEXT,
+            vetoes      TEXT,
+            margin      REAL,
+            price       REAL,
+            liquidity   REAL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_near_misses ON near_misses(chain, address, kind, reason, ts)",
+    ],
 }
 
 
@@ -285,7 +303,7 @@ def config_by_hash(conn: sqlite3.Connection, h: str | None) -> dict | None:
 
 EXPECTED_TABLES = {
     "meta", "scan_rows", "nominations", "candidates", "trades",
-    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions", "rug_checks", "config_versions",
+    "alerts", "labels", "safety", "cu_ledger", "tape_features", "decisions", "rug_checks", "config_versions", "near_misses",
 }
 
 

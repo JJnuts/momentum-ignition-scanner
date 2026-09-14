@@ -73,6 +73,7 @@ Remaining, in order (details in `ROADMAP.md`):
 | T15 replay backtester | deterministic re-run of every stage over recorded data; must reproduce live decisions (knowledge time + config version, schema v8) | done |
 | Milestone C | first evidence-based tuning pass, refreeze, second window | done 2026-09-14 (Solana IGNITION bar 60; FROZEN v2) |
 | T15a–T15d | CU budget: local-day cap, quiet window 09–15 local, spend trims, live verification | a–c done, d running |
+| Near-miss log | records why close calls did not alert (score / veto / policy / late), labeled like controls; tune section 7 | done 2026-09-15 |
 | Milestone D | second window ≥100 alerts per chain, second tuning pass | running |
 | T9b pre-migration regime | bonding-curve tokens (progress velocity, buyers/min, migration dedupe) | optional |
 | v2: T16–T19 | WebSocket rail (Premium), Helius bundle clustering, paper executor, live executor at minimum size | not scoped |

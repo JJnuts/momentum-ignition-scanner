@@ -941,3 +941,31 @@ worst slice on every measure (17 % win, worst 60 m mean). Robinhood keeps
 scoring key. Next review: Milestone D after a second window of n >= 100
 IGNITION+CONFIRMED per chain collected after 2026-09-14 with the T15
 budget fixes and the tape-history fix in effect.
+
+---------------------------------------------------------------------------
+## 31. Near-miss ("why not") log (2026-09-15)
+
+Alerts show how the tokens we picked behaved; they cannot show whether a
+veto or the score bar is discarding winners. The near-miss log records, once
+per candidate episode, every decision that came close and the ONE reason it
+did not alert, then labels it like a control (close labels + a 40 % sampled
+candle path):
+
+| kind | condition | reason |
+|---|---|---|
+| score | eligible, no hard veto, within 10 points under the chain's IGNITION bar | score |
+| veto | eligible, score >= bar, exactly one hard veto | WASH / DISTRIBUTION / REJECTION / DEV_INSIDER / BUNDLER / SAFETY |
+| policy | alertable but not sent | cooldown / hourly_cap |
+| late | no veto, score >= bar, past the eligibility window | late |
+
+Two simultaneous vetoes are not a near miss (removing one would not have
+alerted). Dedupe: one row per (chain, address, kind, reason) per 20 min;
+400 rows per local day. Cost: close labels are batched multi_price; candle
+paths ~0.4 x 45 CU per row.
+
+tune.py section 7 reports each reason's win rate against alerts and
+controls. Verdicts: DISCARDING WINNERS when a reason's win rate is at or
+above the alert win rate (or 2x controls before alerts are labeled);
+"correctly excluded" when it sits at control level. This is the input for
+the Milestone D question "which vetoes cost us and which bar is right",
+answered with data rather than by argument.

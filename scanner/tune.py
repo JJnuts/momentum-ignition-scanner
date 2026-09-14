@@ -78,7 +78,8 @@ def _num(v: Any) -> float | None:
         return None
 
 
-def load_events(conn: sqlite3.Connection, since_ts: int = 0, kinds: tuple[str, ...] = ("nomination", "control", "alert")) -> list[Event]:
+def load_events(conn: sqlite3.Connection, since_ts: int = 0,
+                kinds: tuple[str, ...] = ("nomination", "control", "alert", "near_miss")) -> list[Event]:
     events: dict[tuple[str, int], Event] = {}
     # nominations + controls carry Stage-1 features
     for r in conn.execute("SELECT id, chain, address, ts, tier, price, liquidity, features_json FROM nominations WHERE ts>=?",
@@ -117,6 +118,13 @@ def load_events(conn: sqlite3.Connection, since_ts: int = 0, kinds: tuple[str, .
                 except json.JSONDecodeError:
                     pass
             events[("alert", int(r["id"]))] = ev
+    if "near_miss" in kinds:
+        for r in conn.execute("SELECT id, chain, address, ts, kind, reason, score, tier, vetoes, margin, price, liquidity "
+                              "FROM near_misses WHERE ts>=?", (since_ts,)):
+            events[("near_miss", int(r["id"]))] = Event(
+                "near_miss", int(r["id"]), r["chain"], r["address"], int(r["ts"]), _num(r["price"]), _num(r["liquidity"]),
+                {"score": _num(r["score"]), "nm_kind": r["kind"], "nm_reason": r["reason"], "nm_margin": _num(r["margin"])},
+                tier=r["tier"])
     # labels
     for r in conn.execute("SELECT ref_kind, ref_id, horizon_min, price, high, low, liquidity, t0_price, t0_liq, status FROM labels "
                           "WHERE t0_ts>=? AND status='done'", (since_ts,)):
@@ -248,7 +256,7 @@ def build_report(conn: sqlite3.Connection, cfg: dict[str, Any] | None = None, si
     s = _settings(cfg)
     now = int(time.time()) if now is None else now
     events = load_events(conn, since_ts)
-    groups = {k: [e for e in events if e.kind == k] for k in ("alert", "nomination", "control")}
+    groups = {k: [e for e in events if e.kind == k] for k in ("alert", "nomination", "control", "near_miss")}
     lines = [f"# tune report - {time.strftime('%Y-%m-%d %H:%M', time.gmtime(now))} UTC",
              f"win = MFE(+{s['win_horizon_min']}m) >= +{s['win_threshold_pct']:.0f}% (controls: close return) · "
              f"big win = +{s['big_win_threshold_pct']:.0f}% within {s['big_win_horizon_min']}m · rug = liquidity <= "
@@ -309,6 +317,38 @@ def build_report(conn: sqlite3.Connection, cfg: dict[str, Any] | None = None, si
                          f"avg win {v['avg_win_pct']:+.1f}% avg loss {v['avg_loss_pct']:+.1f}%")
         else:
             lines.append(f"- {name}: n=0")
+    lines.append("")
+    # 7. near misses - why not
+    nms = groups["near_miss"]
+    alert_rate, na = _rate([is_win(e, s) for e in groups["alert"]])
+    lines.append(f"## 7. Near misses - why not (win rate per reason vs alerts {_f(alert_rate, '{:.0%}')} n={na} "
+                 f"and controls {_f(ctrl_rate, '{:.0%}')} n={nc})")
+    if not nms:
+        lines.append("_no near misses recorded yet (needs the near-miss log running)_")
+    else:
+        lines.append("| reason | n | labeled | win rate | rug | median ret 15/60 | verdict |")
+        lines.append("|---|---|---|---|---|---|---|")
+        by: dict[str, list[Event]] = {}
+        for e in nms:
+            k = e.features.get("nm_kind") or "?"
+            r_ = e.features.get("nm_reason") or "?"
+            by.setdefault(r_ if k in ("score", "late") else f"{k}:{r_}", []).append(e)
+        for name, evs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+            wr, nw = _rate([is_win(e, s) for e in evs])
+            rr, _ = _rate([is_rug(e, s) for e in evs])
+            med = "/".join(_f(statistics.median([e.ret[h] for e in evs if h in e.ret]) if any(h in e.ret for e in evs) else None, "{:+.0f}")
+                           for h in (15, 60))
+            if nw < int(s["min_group_n"]) or wr is None:
+                verdict = "n too small"
+            elif alert_rate is not None and wr >= alert_rate:
+                verdict = "DISCARDING WINNERS (>= alerts)"
+            elif alert_rate is None and ctrl_rate is not None and wr >= max(2 * ctrl_rate, 0.15):
+                verdict = "DISCARDING WINNERS (>= 2x controls; no labeled alerts yet)"
+            elif ctrl_rate is not None and wr <= ctrl_rate * 1.2:
+                verdict = "correctly excluded (~controls)"
+            else:
+                verdict = "in between"
+            lines.append(f"| {name} | {len(evs)} | {nw} | {_f(wr, '{:.0%}')} | {_f(rr, '{:.0%}')} | {med} | {verdict} |")
     lines.append("")
     lines.append("_Read with care: n is small until Milestone B completes; lift on < 30 events is noise. "
                  "T15's replay evaluates exact paths; this report is the coarse view._")
